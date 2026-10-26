@@ -121,6 +121,15 @@ static volatile uint64_t g_madeira_thr_last_rip[4] = {0,0,0,0};
 /* iOS-Madeira 2026-05-18 low-noise CompileBlock instrumentation counters. */
 static volatile uint64_t g_cb_total = 0;
 static volatile uint64_t g_cb_real_compiles = 0;
+// MADEIRA (local fork): disk cache effect, reported with [CB_SUMMARY].
+static volatile uint64_t g_dc_hits = 0;
+static volatile uint64_t g_dc_misses = 0;
+static volatile uint64_t g_dc_stores = 0;
+static volatile uint64_t g_dc_hit_ns = 0;
+static volatile uint64_t g_jit_ns = 0;
+static inline uint64_t IosNowNs() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 #if defined(FEX_IOS_HOST) && defined(_WIN32)
 /* iOS-Madeira ml460 (#75): pool-tail sweeper, implemented by the ARM64EC
@@ -1975,6 +1984,9 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
                         Frame ? Frame->State.L1Pointer : 0,
                         Frame ? Frame->State.L1Mask : 0,
                         (T && T->LookupCache) ? T->LookupCache->GetL1Pointer() : 0);
+      LogMan::Msg::EFmt("[disk-cache] reading={} writing={} hits={} misses={} stores={} lookup_ms={} jit_ms={}",
+                        DiskCache.IsReadingDiskCache(), DiskCache.IsWritingDiskCache(), g_dc_hits, g_dc_misses, g_dc_stores,
+                        g_dc_hit_ns / 1000000, g_jit_ns / 1000000);
 
       /* iOS-Madeira ml622: drain the rpmalloc remote-free CAS snapshot HERE —
        * outside rpmalloc, where formatting is safe. The allocator side only ever
@@ -2183,7 +2195,11 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
     // ml455: a delivery compile publishes nothing, so it neither loads from nor stores to the disk cache.
     if (!IosUnpublished)
 #endif
-    Hit = DiskCache.Lookup(Thread, Region, GuestRIP, DiskCacheGuestCodeKey);
+    {
+      const uint64_t T0 = IosNowNs();
+      Hit = DiskCache.Lookup(Thread, Region, GuestRIP, DiskCacheGuestCodeKey);
+      __sync_add_and_fetch(&g_dc_hit_ns, IosNowNs() - T0);
+    }
     if (Hit && !DiskCache.IsValidating()) {
       auto LoadedCode = Thread->CPUBackend->LoadCachedCode(Hit->HostCode);
       if (LoadedCode.BlockBegin) {
@@ -2207,6 +2223,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
         LOGMAN_THROW_A_FMT(CachedHostCode != 0, "Couldn't find GuestRIP in Disk Cache entrypoints!");
 
         FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedDiskCacheHitCount, 1);
+        __sync_add_and_fetch(&g_dc_hits, 1);
         Thread->FrontendDecoder->DelayedDisownBuffer();
 
         Thread->FrontendDecoder->ValidateDisownedOrFree();
@@ -2215,6 +2232,9 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
       }
     }
     FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedDiskCacheMissCount, 1);
+    if (DiskCacheGuestCodeKey) {
+      __sync_add_and_fetch(&g_dc_misses, 1);
+    }
   }
 
   // Accumulate a JIT count now, as even if another thread raced us, it should count as a compile.
@@ -2227,7 +2247,9 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
     FEXCore::Utils::WritePriorityMutex::IosAdjustUnpublishedCompileDepth(1);
   }
 #endif
+  const uint64_t IosJitT0 = IosNowNs();
   auto [CompiledCode, DebugData, StartAddr, Length, NeedsAddGuestCodeRanges] = CompileCode(Thread, GuestRIP, MaxInst);
+  __sync_add_and_fetch(&g_jit_ns, IosNowNs() - IosJitT0);
 #ifdef FEX_IOS_HOST
   if (IosUnpublished) {
     FEXCore::Utils::WritePriorityMutex::IosAdjustUnpublishedCompileDepth(-1);
@@ -2339,7 +2361,9 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
       std::span<const uint8_t> GuestCode = {reinterpret_cast<const uint8_t*>(StartAddr), Length};
       const Frontend::Decoder::DecodedBlockInformation* BlockInfo =
         NeedsAddGuestCodeRanges ? Thread->FrontendDecoder->GetDecodedBlockInfo() : nullptr;
-      DiskCache.Store(Thread, Region, GuestRIP, *DiskCacheGuestCodeKey, GuestCode, CompiledCode, Relocations, BlockInfo);
+      if (DiskCache.Store(Thread, Region, GuestRIP, *DiskCacheGuestCodeKey, GuestCode, CompiledCode, Relocations, BlockInfo)) {
+        __sync_add_and_fetch(&g_dc_stores, 1);
+      }
     }
 
     if (CodeMapWriter && Region && Region->FileStartVA != 0) {
