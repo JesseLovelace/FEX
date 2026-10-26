@@ -40,6 +40,10 @@ extern "C" rp_munmap_hook_type rp_munmap_hook;
 extern "C" rp_mcommit_hook_type rp_mcommit_hook;
 extern "C" rp_mdecommit_hook_type rp_mdecommit_hook;
 extern "C" vma_name_hook_type rp_name_hook;
+#ifdef FEX_IOS_HOST
+// MADEIRA (local fork): Madeira's rpmalloc predates the name hook; nothing reads it there.
+extern "C" __attribute__((weak)) vma_name_hook_type rp_name_hook = nullptr;
+#endif
 
 #ifndef _WIN32
 mmap_hook_type fex_mmap_hook = ::mmap;

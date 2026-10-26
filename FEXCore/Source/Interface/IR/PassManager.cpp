@@ -319,7 +319,7 @@ void IRCapEmit(IREmitter* IREmit, const char* Stage, uint64_t GuestRIP, uint32_t
   const uint64_t WantOffset = Target - GuestRIP;
 
   auto IR = IREmit->ViewIR();
-  fextl::stringstream Stream;
+  fextl::ostringstream Stream;
   FEXCore::IR::Dump(&Stream, &IR);
   const fextl::string Text = Stream.str();
   const std::string_view All {Text.data(), Text.size()};

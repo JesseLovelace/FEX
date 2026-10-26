@@ -67,8 +67,6 @@ FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostF
    * aren't populated). Synthesize a minimal HostFeatures manually with
    * baseline ARMv8.2 features that Apple Silicon supports. */
   FEXCore::HostFeatures HostFeatures = {};
-  HostFeatures.DCacheLineSize = 64;
-  HostFeatures.ICacheLineSize = 64;
   HostFeatures.SupportsCacheMaintenanceOps = !IsWine;
   HostFeatures.SupportsAES = true;
   HostFeatures.SupportsCRC = true;

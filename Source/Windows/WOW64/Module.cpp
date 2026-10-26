@@ -1024,7 +1024,7 @@ void BTCpuProcessInit() {
    * has no way to report failure to wow64.dll, so this is loud on stderr and then refuses to
    * continue rather than limping. */
   {
-    const auto NtDllForTsd = GetModuleHandle("ntdll.dll");
+    const auto NtDllForTsd = GetModuleHandleW(L"ntdll.dll");
     const auto Published = reinterpret_cast<uint32_t*>(GetProcAddress(NtDllForTsd, "ios_teb_tsd_offset"));
     IosTebTsdImportFound = Published != nullptr ? 1u : 0u;
     if (Published && *Published) {
@@ -1181,7 +1181,7 @@ void BTCpuProcessInit() {
 
   SignalDelegator = fextl::make_unique<FEX::DummyHandlers::DummySignalDelegator>();
   SyscallHandler = fextl::make_unique<WowSyscallHandler>();
-  const auto NtDll = GetModuleHandle("ntdll.dll");
+  const auto NtDll = GetModuleHandleW(L"ntdll.dll");
   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
   OvercommitTracker.emplace(IsWine);
 

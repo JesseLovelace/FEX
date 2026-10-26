@@ -749,12 +749,12 @@ static void RaiseException(FEXCore::Core::InternalThreadState* Thread, const EXC
   // every module) and the process dies on an otherwise-survivable fault. Reverse-translate
   // via the alias table (the only valid discriminator — never a band test).
   {
-    const uint64_t PeRip = IosJitReverseTranslate(Args->Context.Pc);
-    if (PeRip != Args->Context.Pc) {
+    const uint64_t PeRip = IosJitReverseTranslate(GuestContext.Pc);
+    if (PeRip != GuestContext.Pc) {
       LogMan::Msg::EFmt("[exc-pool-rip] rev=ml341 reconstructed guest rip {:#x} is a POOL-COPY alias of PE {:#x} "
                         "-- rewriting so guest SEH can resolve the faulting module",
-                        Args->Context.Pc, PeRip);
-      Args->Context.Pc = PeRip;
+                        GuestContext.Pc, PeRip);
+      GuestContext.Pc = PeRip;
     }
   }
 
@@ -777,6 +777,45 @@ static void RaiseException(FEXCore::Core::InternalThreadState* Thread, const EXC
   NtRaiseExceptionNative(&GuestRec, &GuestContext, FirstChance);
 }
 
+#ifdef FEX_IOS_HOST
+// MADEIRA (local fork): keep the dispatch Madeira has run on device. The guest context and record
+// are laid out below the guest stack and the handler returns into KiUserExceptionDispatcher.
+static void RethrowGuestException(FEXCore::Core::InternalThreadState* Thread, const EXCEPTION_RECORD& Rec, ARM64_NT_CONTEXT& Context) {
+  const auto& Config = SignalDelegator->GetConfig();
+  auto& Fault = Thread->CurrentFrame->SynchronousFaultData;
+  uint64_t GuestSp = Context.X[Config.SRAGPRMapping[static_cast<size_t>(FEXCore::X86State::REG_RSP)]];
+  auto* Args = reinterpret_cast<KiUserExceptionDispatcherStackLayout*>(FEXCore::AlignDown(GuestSp, 64)) - 1;
+
+  if (!IsDispatcherAddress(Context.Pc)) {
+    ReconstructThreadState(Thread, Context);
+  }
+  Args->Context = StoreStateToPackedECContext(Thread, Context.Fpcr, Context.Fpsr);
+
+  // ml341: see RaiseException.
+  const uint64_t PeRip = IosJitReverseTranslate(Args->Context.Pc);
+  if (PeRip != Args->Context.Pc) {
+    LogMan::Msg::EFmt("[exc-pool-rip] rev=ml341 reconstructed guest rip {:#x} is a POOL-COPY alias of PE {:#x} "
+                      "-- rewriting so guest SEH can resolve the faulting module",
+                      Args->Context.Pc, PeRip);
+    Args->Context.Pc = PeRip;
+  }
+
+  uint32_t EFlags = CTX->ReconstructCompactedEFLAGS(Thread, false, nullptr, 0);
+  EFlags &= ~(1 << FEXCore::X86State::RFLAG_TF_RAW_LOC);
+  CTX->SetFlagsFromCompactedEFLAGS(Thread, EFlags);
+
+  BOOL FirstChance = TRUE; // KiUserExceptionDispatcher takes no second-chance input
+  Args->Rec = FEX::Windows::HandleGuestException(Fault, Rec, Args->Context.Pc, Args->Context.X8, Args->Context.X0, FirstChance);
+  if (Args->Rec.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+    Args->Context.Cpsr &= ~(1 << 21); // PSTATE.SS
+  } else if (Args->Rec.ExceptionCode == EXCEPTION_BREAKPOINT) {
+    Args->Context.Pc -= 1;
+  }
+
+  Context.Sp = reinterpret_cast<uint64_t>(Args);
+  Context.Pc = KiUserExceptionDispatcher;
+}
+#else
 static void RethrowGuestException(FEXCore::Core::InternalThreadState* Thread, const EXCEPTION_RECORD& Rec, ARM64_NT_CONTEXT& HostContext) {
   LogMan::Msg::DFmt("Reconstructing context");
   if (!IsDispatcherAddress(HostContext.Pc)) {
@@ -787,6 +826,7 @@ static void RethrowGuestException(FEXCore::Core::InternalThreadState* Thread, co
 
   RaiseException(Thread, Rec, GuestContext);
 }
+#endif
 
 [[noreturn]]
 static void SynchronousExceptionHandler(FEXCore::Context::Context* CTX, FEXCore::Core::CpuStateFrame* Frame) {
@@ -1033,7 +1073,7 @@ NTSTATUS ProcessInit() {
    * A missing or zero export is fatal, not a reason to fall back: the old
    * constant is exactly the value that is wrong. */
   {
-    const auto NtDllForTsd = GetModuleHandle("ntdll.dll");
+    const auto NtDllForTsd = GetModuleHandleW(L"ntdll.dll");
     const auto Published = reinterpret_cast<uint32_t*>(GetProcAddress(NtDllForTsd, "ios_teb_tsd_offset"));
     if (Published && *Published) {
       IosTebTsdOffset = *Published;
@@ -1065,12 +1105,12 @@ NTSTATUS ProcessInit() {
 
 #ifdef FEX_IOS_HOST
   /* Recorder emitted only for this executable, before CTX/JIT creation. */
-  const auto HistoryName = fextl::string {ExecutableName};
+  const auto HistoryName = fextl::string {AppConfigName};
   const char* HistoryOpt = getenv("MADEIRA_FEX_BRANCH_HISTORY");
   FEXCore::Core::IosGuestBranchTraceEnabled =
     _stricmp(HistoryName.c_str(), "Launcher.exe") == 0 && !(HistoryOpt && HistoryOpt[0] == '0');
   LogMan::Msg::IFmt("FEX: branch-history-v1 madeira-bcd enabled={} exe={}",
-                   FEXCore::Core::IosGuestBranchTraceEnabled != 0, ExecutableName);
+                   FEXCore::Core::IosGuestBranchTraceEnabled != 0, AppConfigName);
 #endif
 
 
@@ -1596,7 +1636,7 @@ bool ResetToConsistentStateImpl(const ThreadCPUArea CPUArea, EXCEPTION_RECORD* E
                        (uint64_t)__builtin_frame_address(0),
                        CPUArea.EmulatorStackLimit(),
                        CPUArea.EmulatorStackBase());
-    Exception::RethrowGuestException(*Exception, *NativeContext);
+    Exception::RethrowGuestException(Thread, *Exception, *NativeContext);
     return true;
 #else
     LogMan::Msg::EFmt("Unexpected exception in JIT code on guest stack");
@@ -2192,10 +2232,10 @@ NTSTATUS ThreadInit() {
   IosTiLog("[FEX-iOS] TI:callret\n");
 #endif
 #ifdef FEX_IOS_HOST
-  static_assert(offsetof(FEXCore::Core::CpuStateFrame, SuspendDoorbell) == 1512, "IOS_FRAME_SUSPEND_DOORBELL in Module.S");
-  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosCpuArea) == 4080, "IOS_FRAME_CPU_AREA in Module.S");
-  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosXpCallCount) == 4088, "IOS_FRAME_XP_COUNT in Module.S");
-  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosAliasHint) == 4096, "IOS_FRAME_ALIAS_HINT in Module.S");
+  static_assert(offsetof(FEXCore::Core::CpuStateFrame, SuspendDoorbell) == 1256, "IOS_FRAME_SUSPEND_DOORBELL in Module.S");
+  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosCpuArea) == 3856, "IOS_FRAME_CPU_AREA in Module.S");
+  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosXpCallCount) == 3864, "IOS_FRAME_XP_COUNT in Module.S");
+  static_assert(offsetof(FEXCore::Core::CpuStateFrame, IosAliasHint) == 3872, "IOS_FRAME_ALIAS_HINT in Module.S");
   // ExitFunctionECJit reads the CPU area from the frame; the doorbell it reads is the frame's own
   // SuspendDoorbell, which CPUArea.Area->SuspendDoorbell points at (set below).
   Thread->CurrentFrame->IosCpuArea = reinterpret_cast<uint64_t>(CPUArea.Area);

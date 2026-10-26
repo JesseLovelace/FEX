@@ -308,10 +308,10 @@ endif()
 # Meta-library to link jemalloc libraries enabled in the build configuration.
 # Only needed for targets that run emulation. For others, use JemallocDummy.
 add_library(JemallocLibs STATIC Utils/AllocatorHooks.cpp)
+target_include_directories(JemallocLibs PRIVATE "${PROJECT_SOURCE_DIR}/include/")
 if (ENABLE_FEX_ALLOCATOR)
   target_compile_definitions(JemallocLibs PRIVATE ENABLE_FEX_ALLOCATOR=1)
   target_link_libraries(JemallocLibs PUBLIC rpmalloc)
-  target_include_directories(JemallocLibs PRIVATE "${PROJECT_SOURCE_DIR}/include/")
 endif()
 if (ENABLE_JEMALLOC_GLIBC_ALLOC)
   set_source_files_properties(Interface/HLE/Thunks/Thunks.cpp PROPERTIES COMPILE_DEFINITIONS ENABLE_JEMALLOC_GLIBC=1)
