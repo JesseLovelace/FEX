@@ -6,7 +6,8 @@
       "SVE256",
       "AFP"
     ],
-    "DisabledHostFeatures": []
+    "DisabledHostFeatures": [],
+    "BinaryCacheVersion": 37
   },
   "Instructions": {
     "pmulhuw xmm0, xmm1": {

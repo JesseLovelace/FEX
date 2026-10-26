@@ -45,6 +45,37 @@ FILE_INFORMATION_CLASS FileInfoClassToNT(FILE_INFO_BY_HANDLE_CLASS InformationCl
 }
 } // namespace
 
+DLLEXPORT_FUNC(BOOL, RemoveDirectoryA, (LPCSTR lpFileName)) {
+  ScopedUnicodeString FileName {lpFileName};
+  return RemoveDirectoryW(FileName->Buffer);
+}
+
+DLLEXPORT_FUNC(BOOL, RemoveDirectoryW, (LPCWSTR lpFileName)) {
+  UNICODE_STRING PathW;
+  RtlInitUnicodeString(&PathW, lpFileName);
+
+  ScopedUnicodeString NTPath;
+  if (!RtlDosPathNameToNtPathName_U(PathW.Buffer, &*NTPath, nullptr, nullptr)) {
+    SetLastError(ERROR_PATH_NOT_FOUND);
+    return false;
+  }
+
+  OBJECT_ATTRIBUTES ObjAttributes;
+  InitializeObjectAttributes(&ObjAttributes, &*NTPath, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+
+  HANDLE Handle;
+  IO_STATUS_BLOCK IOSB;
+
+  NTSTATUS Status =
+    NtCreateFile(&Handle, SYNCHRONIZE | DELETE, &ObjAttributes, &IOSB, nullptr, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                 FILE_OPEN, FILE_DELETE_ON_CLOSE | FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT, nullptr, 0);
+  if (WinAPIReturn(Status)) {
+    Status = NtClose(Handle);
+  }
+
+  return WinAPIReturn(Status);
+}
+
 DLLEXPORT_FUNC(BOOL, DeleteFileA, (LPCSTR lpFileName)) {
   ScopedUnicodeString FileName {lpFileName};
   return DeleteFileW(FileName->Buffer);
@@ -111,34 +142,16 @@ DLLEXPORT_FUNC(HANDLE, CreateFileW,
 DLLEXPORT_FUNC(WINBOOL, WriteFile,
                (HANDLE hFile, const void* lpBuffer, DWORD nNumberOfBytesToWrite, LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped)) {
   IO_STATUS_BLOCK IOSB;
+  LARGE_INTEGER ByteOffset;
+  PLARGE_INTEGER ByteOffsetPtr = nullptr;
   if (lpOverlapped) {
-    UNIMPLEMENTED();
+    if (lpOverlapped->hEvent) {
+      UNIMPLEMENTED();
+    }
+    ByteOffset.QuadPart = (static_cast<LONGLONG>(lpOverlapped->OffsetHigh) << 32) | lpOverlapped->Offset;
+    ByteOffsetPtr = &ByteOffset;
   }
-  /* iOS-Madeira ml572: WriteFile TRACING BLOCK REMOVED — it was a stack smash.
-   *
-   * It formatted into `char dbg[8 + 64 + 16]` (88 bytes) but wrote a 38-byte
-   * header plus up to 64 preview bytes, each of which could expand to 2 chars
-   * for '\n', plus a trailing newline: 103 bytes for ordinary text and 167 in
-   * the worst case. Any WriteFile whose payload was >= 50 bytes overflowed, and
-   * the compiler had placed the callee-saved registers immediately after it
-   * (dbg at sp+0x18, saved x19 at sp+0x70 — exactly 88 bytes later, x20 at
-   * sp+0x78). So the overflow wrote the log text straight onto the caller's
-   * saved x20, and on return the caller's `blr x20` jumped into ASCII.
-   *
-   * Proven byte-for-byte across four runs: ml571 faulted at pc=0xa336531373030,
-   * which is the little-endian bytes "0071e3\n\0" — the tail of the rpm-poison
-   * record being written at that moment. ml483a/ml484a/mlf show the same shape
-   * with 0071e0/0071e1/0071e2. Diagnosis by Sol.
-   *
-   * The fault then landed while FEX's CodeInvalidationMutex was held, and the
-   * guest redirect bypassed the RAII unlock — leaving one leaked reader and one
-   * waiting writer, which stops compilation dead. That is the [deliver-hold]
-   * "leaks the read hold" line and the whole-app freeze.
-   *
-   * Deleted rather than enlarged: this is a hot path on every guest write, the
-   * output was going to a guest stderr handle we rarely read, and a fixed-size
-   * formatter here has now cost more than it ever explained. */
-  NTSTATUS Status = NtWriteFile(hFile, nullptr, nullptr, nullptr, &IOSB, lpBuffer, nNumberOfBytesToWrite, nullptr, nullptr);
+  NTSTATUS Status = NtWriteFile(hFile, nullptr, nullptr, nullptr, &IOSB, lpBuffer, nNumberOfBytesToWrite, ByteOffsetPtr, nullptr);
   if (lpNumberOfBytesWritten) {
     *lpNumberOfBytesWritten = static_cast<DWORD>(IOSB.Information);
   }
@@ -191,6 +204,18 @@ DLLEXPORT_FUNC(WINBOOL, WriteConsoleW,
   return WinAPIReturn(Status);
 }
 
+DLLEXPORT_FUNC(WINBOOL, GetFileSizeEx, (HANDLE hFile, PLARGE_INTEGER lpFileSize)) {
+  IO_STATUS_BLOCK IOSB;
+  FILE_STANDARD_INFORMATION StandardInfo;
+  if (NTSTATUS Status = NtQueryInformationFile(hFile, &IOSB, &StandardInfo, sizeof(StandardInfo), FileStandardInformation); Status) {
+    return WinAPIReturn(Status);
+  }
+  if (lpFileSize) {
+    *lpFileSize = StandardInfo.EndOfFile;
+  }
+  return true;
+}
+
 DLLEXPORT_FUNC(WINBOOL, SetFilePointerEx, (HANDLE hFile, LARGE_INTEGER liDistanceToMove, PLARGE_INTEGER lpNewFilePointer, DWORD dwMoveMethod)) {
   IO_STATUS_BLOCK IOSB;
   FILE_POSITION_INFORMATION PositionInfo;
@@ -203,9 +228,18 @@ DLLEXPORT_FUNC(WINBOOL, SetFilePointerEx, (HANDLE hFile, LARGE_INTEGER liDistanc
   }
 
   switch (dwMoveMethod) {
-  case FILE_BEGIN: PositionInfo.CurrentByteOffset = liDistanceToMove; break;
-  case FILE_CURRENT: PositionInfo.CurrentByteOffset.QuadPart += liDistanceToMove.QuadPart; break;
-  case FILE_END: PositionInfo.CurrentByteOffset = StandardInfo.EndOfFile; break;
+  case FILE_BEGIN: {
+    PositionInfo.CurrentByteOffset = liDistanceToMove;
+    break;
+  }
+  case FILE_CURRENT: {
+    PositionInfo.CurrentByteOffset.QuadPart += liDistanceToMove.QuadPart;
+    break;
+  }
+  case FILE_END: {
+    PositionInfo.CurrentByteOffset.QuadPart = StandardInfo.EndOfFile.QuadPart + liDistanceToMove.QuadPart;
+    break;
+  }
   default: UNIMPLEMENTED();
   }
   if (NTSTATUS Status = NtSetInformationFile(hFile, &IOSB, &PositionInfo, sizeof(PositionInfo), FilePositionInformation); Status) {
@@ -220,10 +254,17 @@ DLLEXPORT_FUNC(WINBOOL, SetFilePointerEx, (HANDLE hFile, LARGE_INTEGER liDistanc
 DLLEXPORT_FUNC(WINBOOL, ReadFile,
                (HANDLE hFile, void* lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped)) {
   IO_STATUS_BLOCK IOSB;
+  LARGE_INTEGER ByteOffset;
+  PLARGE_INTEGER ByteOffsetPtr = nullptr;
   if (lpOverlapped) {
-    UNIMPLEMENTED();
+    if (lpOverlapped->hEvent) {
+      // no actual async-overlapped, just enough for PRead
+      UNIMPLEMENTED();
+    }
+    ByteOffset.QuadPart = (static_cast<LONGLONG>(lpOverlapped->OffsetHigh) << 32) | lpOverlapped->Offset;
+    ByteOffsetPtr = &ByteOffset;
   }
-  NTSTATUS Status = NtReadFile(hFile, nullptr, nullptr, nullptr, &IOSB, lpBuffer, nNumberOfBytesToRead, nullptr, nullptr);
+  NTSTATUS Status = NtReadFile(hFile, nullptr, nullptr, nullptr, &IOSB, lpBuffer, nNumberOfBytesToRead, ByteOffsetPtr, nullptr);
   if (lpNumberOfBytesRead) {
     *lpNumberOfBytesRead = static_cast<DWORD>(IOSB.Information);
   }
@@ -232,6 +273,37 @@ DLLEXPORT_FUNC(WINBOOL, ReadFile,
 
 DLLEXPORT_FUNC(WINBOOL, FlushFileBuffers, (HANDLE hFile)) {
   UNIMPLEMENTED();
+}
+
+DLLEXPORT_FUNC(
+  WINBOOL, LockFileEx,
+  (HANDLE hFile, DWORD dwFlags, DWORD dwReserved, DWORD nNumberOfBytesToLockLow, DWORD nNumberOfBytesToLockHigh, LPOVERLAPPED lpOverlapped)) {
+  if (!lpOverlapped || lpOverlapped->hEvent) {
+    UNIMPLEMENTED();
+  }
+  LARGE_INTEGER ByteOffset;
+  ByteOffset.QuadPart = (static_cast<LONGLONG>(lpOverlapped->OffsetHigh) << 32) | lpOverlapped->Offset;
+  LARGE_INTEGER Length;
+  Length.QuadPart = (static_cast<LONGLONG>(nNumberOfBytesToLockHigh) << 32) | nNumberOfBytesToLockLow;
+  // IoStatusBlock must be null on Wine :harold:
+  NTSTATUS Status = NtLockFile(hFile, nullptr, nullptr, nullptr, nullptr, &ByteOffset, &Length, 0, !!(dwFlags & LOCKFILE_FAIL_IMMEDIATELY),
+                               !!(dwFlags & LOCKFILE_EXCLUSIVE_LOCK));
+  return WinAPIReturn(Status);
+}
+
+DLLEXPORT_FUNC(WINBOOL, UnlockFileEx,
+               (HANDLE hFile, DWORD dwReserved, DWORD nNumberOfBytesToUnlockLow, DWORD nNumberOfBytesToUnlockHigh, LPOVERLAPPED lpOverlapped)) {
+  if (!lpOverlapped || lpOverlapped->hEvent) {
+    UNIMPLEMENTED();
+  }
+  LARGE_INTEGER ByteOffset;
+  ByteOffset.QuadPart = (static_cast<LONGLONG>(lpOverlapped->OffsetHigh) << 32) | lpOverlapped->Offset;
+  LARGE_INTEGER Length;
+  Length.QuadPart = (static_cast<LONGLONG>(nNumberOfBytesToUnlockHigh) << 32) | nNumberOfBytesToUnlockLow;
+  // IoStatusBlock must be non-null on Wine :harold:
+  IO_STATUS_BLOCK IoStatusBlock;
+  NTSTATUS Status = NtUnlockFile(hFile, &IoStatusBlock, &ByteOffset, &Length, 0);
+  return WinAPIReturn(Status);
 }
 
 DLLEXPORT_FUNC(DWORD, GetFinalPathNameByHandleA, (HANDLE hFile, LPSTR lpszFilePath, DWORD cchFilePath, DWORD dwFlags)) {

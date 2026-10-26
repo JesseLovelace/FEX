@@ -128,6 +128,7 @@ struct DecodedOperand {
     RIPRelativeRelocation,
     Literal,
     LiteralRelocation,
+    LiteralPatchable,
     SIB,
     SIBRelocation
   };
@@ -159,6 +160,9 @@ struct DecodedOperand {
   bool IsLiteralRelocation() const {
     return Type == OpType::LiteralRelocation;
   }
+  bool IsLiteralPatchable() const {
+    return Type == OpType::LiteralPatchable;
+  }
   bool IsSIB() const {
     return Type == OpType::SIB;
   }
@@ -167,7 +171,7 @@ struct DecodedOperand {
   }
 
   uint64_t Literal() const {
-    LOGMAN_THROW_A_FMT(IsLiteral(), "Precondition: must be a literal");
+    LOGMAN_THROW_A_FMT(IsLiteral() || IsLiteralPatchable(), "Precondition: must be a literal");
     return Data.Literal.Value;
   }
 
@@ -181,10 +185,14 @@ struct DecodedOperand {
     struct {
       int64_t Displacement;
       uint8_t GPR;
+      bool PatchableDisp;
+      uint8_t DispOffset;
     } GPRIndirect; // Shared with GPRIndirectRelocation
 
     struct {
       int64_t Value;
+      bool PatchableDisp;
+      uint8_t DispOffset;
     } RIPLiteral; // Shared with RIPLiteralRelocation
 
     struct LiteralType {
@@ -197,11 +205,19 @@ struct DecodedOperand {
     } LiteralRelocation;
 
     struct {
+      uint64_t Value;
+      uint8_t Size;
+      uint8_t FieldOffset;
+      uint8_t Width;
+    } LiteralPatchable;
+    struct {
       int64_t Offset;
       uint8_t Scale;
       uint8_t Index; // ~0 invalid
       uint8_t Base;  // ~0 invalid
-    } SIB;           // Shared with SIBRelocation
+      bool PatchableDisp;
+      uint8_t DispOffset;
+    } SIB; // Shared with SIBRelocation
   };
 
   TypeUnion Data;
@@ -339,11 +355,8 @@ namespace InstFlags {
   constexpr InstFlagType FLAGS_X87_FLAGS = (1ULL << 10);
 
   // Non-XMM subflags
-  constexpr InstFlagType FLAGS_SF_DST_RAX = (1ULL << 11);
-  constexpr InstFlagType FLAGS_SF_DST_RDX = (1ULL << 12);
-  constexpr InstFlagType FLAGS_SF_SRC_RAX = (1ULL << 13);
-  constexpr InstFlagType FLAGS_SF_SRC_RCX = (1ULL << 14);
-  constexpr InstFlagType FLAGS_SF_REX_IN_BYTE = (1ULL << 15);
+  constexpr InstFlagType FLAGS_SF_REX_IN_BYTE = (1ULL << 11);
+  // subflag [15:12] unused
 
   // XMM subflags
   constexpr InstFlagType FLAGS_SF_UNUSED = (1ULL << 11); // No assigned behavior yet
@@ -393,7 +406,8 @@ namespace InstFlags {
 
   constexpr InstFlagType FLAGS_CALL = (1ULL << 30);
   constexpr InstFlagType FLAGS_SUPPORTS_LOCK = (1ULL << 31);
-  // Flags [57..32]: Undefined
+  constexpr InstFlagType FLAGS_LITERAL_PATCHABLE = (1ULL << 32);
+  // Flags [57..33]: Undefined
   // Flags [60..58]: Dst size
   constexpr InstFlagType FLAGS_SIZE_DST_OFF = 58;
   // Flags [63..61]: Src size
@@ -408,13 +422,6 @@ namespace InstFlags {
   constexpr InstFlagType SIZE_128BIT = 0b101;
   constexpr InstFlagType SIZE_256BIT = 0b110;
   constexpr InstFlagType SIZE_64BITDEF = 0b111; // Default mode is 64bit instead of typical 32bit
-
-#ifndef _WIN32
-  constexpr uint32_t DEFAULT_SYSCALL_FLAGS = FLAGS_NO_OVERLAY;
-#else
-                                                // Syscall ends a block on WIN32 because the instruction can update the CPU's RIP.
-  constexpr uint32_t DEFAULT_SYSCALL_FLAGS = FLAGS_NO_OVERLAY | FLAGS_BLOCK_END;
-#endif
 
   constexpr InstFlagType GetSizeDstFlags(InstFlagType Flags) {
     return (Flags >> FLAGS_SIZE_DST_OFF) & SIZE_MASK;

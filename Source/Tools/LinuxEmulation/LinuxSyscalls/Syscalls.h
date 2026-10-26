@@ -8,6 +8,7 @@ $end_info$
 
 #pragma once
 
+#include "Common/Linux/LinuxVersion.h"
 #include "Common/VolatileMetadata.h"
 #include "LinuxSyscalls/FileManagement.h"
 #include "LinuxSyscalls/LinuxAllocator.h"
@@ -68,6 +69,10 @@ namespace Core {
 } // namespace FEXCore
 
 namespace FEX::HLE {
+struct SyscallArguments {
+  static constexpr std::size_t MAX_ARGS = 7;
+  uint64_t Argument[MAX_ARGS];
+};
 
 class SyscallHandler;
 class SignalDelegator;
@@ -123,8 +128,7 @@ public:
 
   virtual ~SyscallHandler();
 
-  // In the case that the syscall doesn't hit the optimized path then we still need to go here
-  uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) final override;
+  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) final override;
 
   void DefaultProgramBreak(uint64_t Base, uint64_t Size);
   void DeserializeSeccompFD(FEX::HLE::ThreadStateObject* Thread, int FD) {
@@ -201,6 +205,7 @@ public:
   FEX_CONFIG_OPT(SMCChecks, SMCCHECKS);
   FEX_CONFIG_OPT(NeedsSeccomp, NEEDSSECCOMP);
   FEX_CONFIG_OPT(EnableCodeCaching, ENABLECODECACHINGWIP);
+  FEX_CONFIG_OPT(EnableDiskCache, DISKCACHE);
 
   uint32_t GetHostKernelVersion() const {
     return HostKernelVersion;
@@ -210,25 +215,10 @@ public:
   }
 
   bool IsHostKernelVersionAtLeast(uint32_t Major, uint32_t Minor = 0, uint32_t Patch = 0) const {
-    return GetHostKernelVersion() >= KernelVersion(Major, Minor, Patch);
+    return GetHostKernelVersion() >= LinuxVersion::KernelVersion(Major, Minor, Patch);
   }
 
-  static uint32_t CalculateHostKernelVersion();
   uint32_t CalculateGuestKernelVersion();
-
-  static uint32_t KernelVersion(uint32_t Major, uint32_t Minor = 0, uint32_t Patch = 0) {
-    return (Major << 24) | (Minor << 16) | Patch;
-  }
-
-  static uint32_t KernelMajor(uint32_t Version) {
-    return Version >> 24;
-  }
-  static uint32_t KernelMinor(uint32_t Version) {
-    return (Version >> 16) & 0xFF;
-  }
-  static uint32_t KernelPatch(uint32_t Version) {
-    return Version & 0xFFFF;
-  }
 
   virtual FEX::HLE::MemAllocator* Get32BitAllocator() {
     return Alloc32Handler.get();
@@ -376,12 +366,36 @@ private:
   bool NeedToCheckXID {true};
 
 #ifdef DEBUG_STRACE
-  void Strace(FEXCore::HLE::SyscallArguments* Args, uint64_t Ret);
+  void Strace(FEXCore::Core::CpuStateFrame* Frame, uint64_t Ret);
 #endif
   fextl::unique_ptr<FEXCore::HLE::SourcecodeMap> GenerateMap(std::string_view GuestBinaryFile, std::string_view GuestBinaryFileId) override;
 
   fextl::unique_ptr<FEX::HLE::MemAllocator> Alloc32Handler {};
   std::atomic<uint64_t> AnonSharedId {1};
+
+  static inline uint64_t GetArg(bool Is64Bit, FEXCore::Core::CpuStateFrame* Frame, size_t Arg) {
+    constexpr size_t SyscallArgs = 7;
+    using SyscallArray = std::array<uint64_t, SyscallArgs>;
+
+    static constexpr SyscallArray GPRIndexes_64 = {
+      FEXCore::X86State::REG_RAX, FEXCore::X86State::REG_RDI, FEXCore::X86State::REG_RSI, FEXCore::X86State::REG_RDX,
+      FEXCore::X86State::REG_R10, FEXCore::X86State::REG_R8,  FEXCore::X86State::REG_R9,
+    };
+
+    static constexpr SyscallArray GPRIndexes_32 = {
+      FEXCore::X86State::REG_RAX, FEXCore::X86State::REG_RBX, FEXCore::X86State::REG_RCX, FEXCore::X86State::REG_RDX,
+      FEXCore::X86State::REG_RSI, FEXCore::X86State::REG_RDI, FEXCore::X86State::REG_RBP,
+    };
+
+    const auto Index = Is64Bit ? GPRIndexes_64[Arg] : GPRIndexes_32[Arg];
+    const auto Mask = Is64Bit ? ~0ULL : ~0U;
+    const auto Thread = FEX::HLE::ThreadManager::GetStateObjectFromCPUState(Frame);
+
+    return Thread->Thread->CurrentFrame->State.gregs[Index] & Mask;
+  };
+
+  template<bool Is64Bit>
+  void HandleSyscallImpl(FEXCore::Core::CpuStateFrame* Frame, uint64_t JITPC);
 };
 
 #define SYSCALL_ERRNO()              \
@@ -393,6 +407,10 @@ private:
   do {                              \
     if (Result == 0) return -errno; \
     return Result;                  \
+  } while (0)
+#define SYSCALL_EFAULT_IF_NULL(Ptr)       \
+  do {                                    \
+    if ((Ptr) == nullptr) return -EFAULT; \
   } while (0)
 
 extern FEX::HLE::SyscallHandler* _SyscallHandler;

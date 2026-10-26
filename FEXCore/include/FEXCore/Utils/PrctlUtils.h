@@ -51,6 +51,10 @@
 #define PR_SHADOW_STACK_ENABLE (1ULL << 0)
 #endif
 
+#ifndef PR_GET_MDWE
+#define PR_GET_MDWE 66
+#endif
+
 #elif defined(__APPLE__)
 #include <sys/mman.h>
 // Stub prctl constants for Apple
@@ -67,5 +71,6 @@
 #define PR_GET_SHADOW_STACK_STATUS 74
 #define PR_LOCK_SHADOW_STACK_STATUS 76
 #define PR_SHADOW_STACK_ENABLE (1ULL << 0)
+#define PR_GET_MDWE 66
 inline int prctl(int, ...) { return -1; }
 #endif

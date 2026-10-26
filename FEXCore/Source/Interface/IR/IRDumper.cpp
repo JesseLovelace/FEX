@@ -30,19 +30,19 @@ namespace FEXCore::IR {
 
 #include <FEXCore/IR/IRDefines.inc>
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, const SHA256Sum& Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, const SHA256Sum& Arg) {
   *out << fextl::fmt::format("sha256:{:02x}", fmt::join(Arg.data, ""));
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, uint64_t Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, uint64_t Arg) {
   *out << fextl::fmt::format("#{:#x}", Arg);
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, const char* const Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, const char* const Arg) {
   *out << fextl::fmt::format("'{}'", Arg);
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, CondClass Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, CondClass Arg) {
   if (Arg == CondClass::AL) {
     *out << "ALWAYS";
     return;
@@ -55,7 +55,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, CondClass Arg)
   *out << CondNames[FEXCore::ToUnderlying(Arg)];
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, MemOffsetType Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, MemOffsetType Arg) {
   static constexpr std::array<std::string_view, 3> Names = {
     "SXTX",
     "UXTW",
@@ -65,7 +65,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, MemOffsetType 
   *out << Names[FEXCore::ToUnderlying(Arg)];
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, RegClass Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, RegClass Arg) {
   *out << [Arg] {
     switch (Arg) {
     case RegClass::Invalid: return "Invalid";
@@ -79,7 +79,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, RegClass Arg) 
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView* IR, OrderedNodeWrapper Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView* IR, OrderedNodeWrapper Arg) {
   if (Arg.IsImmediate()) {
     auto PhyReg = PhysicalRegister(Arg);
 
@@ -128,7 +128,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView* IR, OrderedNode
   }
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, FenceType Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, FenceType Arg) {
   *out << [Arg] {
     switch (Arg) {
     case FenceType::Load: return "Loads";
@@ -140,7 +140,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, FenceType Arg)
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, RoundMode Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, RoundMode Arg) {
   *out << [Arg] {
     switch (Arg) {
     case RoundMode::Nearest: return "Nearest";
@@ -153,7 +153,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, RoundMode Arg)
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, ConstPad Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, ConstPad Arg) {
   *out << [Arg] {
     switch (Arg) {
     case ConstPad::NoPad: return "NoPad";
@@ -164,7 +164,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, ConstPad Arg) 
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, NamedVectorConstant Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, NamedVectorConstant Arg) {
   *out << [Arg] {
     // clang-format off
     switch (Arg) {
@@ -172,6 +172,8 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, NamedVectorCon
         return "u16_incremental_index";
       case NamedVectorConstant::NAMED_VECTOR_INCREMENTAL_U16_INDEX_UPPER:
         return "u16_incremental_index_upper";
+      case NamedVectorConstant::NAMED_VECTOR_INCREMENTAL_U8_INDEX:
+        return "u8_incremental_index";
       case NamedVectorConstant::NAMED_VECTOR_PADDSUBPS_INVERT:
         return "addsubps_invert";
       case NamedVectorConstant::NAMED_VECTOR_PADDSUBPS_INVERT_UPPER:
@@ -260,7 +262,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, NamedVectorCon
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, IndexNamedVectorConstant Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, IndexNamedVectorConstant Arg) {
   *out << [Arg] {
     // clang-format off
     switch (Arg) {
@@ -286,7 +288,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, IndexNamedVect
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, OpSize Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, OpSize Arg) {
   *out << [Arg] {
     switch (Arg) {
     case OpSize::iUnsized: return "Unsized";
@@ -303,7 +305,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, OpSize Arg) {
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, FloatCompareOp Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, FloatCompareOp Arg) {
   *out << [Arg] {
     switch (Arg) {
     case FloatCompareOp::EQ: return "FEQ";
@@ -317,14 +319,14 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, FloatCompareOp
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, FEXCore::IR::BreakDefinition Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, FEXCore::IR::BreakDefinition Arg) {
   *out << "{" << Arg.ErrorRegister << ".";
   *out << static_cast<uint32_t>(Arg.Signal) << ".";
   *out << static_cast<uint32_t>(Arg.TrapNumber) << ".";
   *out << static_cast<uint32_t>(Arg.si_code) << "}";
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, ShiftType Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, ShiftType Arg) {
   *out << [Arg] {
     switch (Arg) {
     case ShiftType::LSL: return "LSL";
@@ -336,7 +338,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, ShiftType Arg)
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, BranchHint Arg) {
+static void PrintArg(fextl::ostringstream* out, const IRListView*, BranchHint Arg) {
   *out << [Arg] {
     switch (Arg) {
     case BranchHint::None: return "None";
@@ -348,11 +350,7 @@ static void PrintArg(fextl::stringstream* out, const IRListView*, BranchHint Arg
   }();
 }
 
-static void PrintArg(fextl::stringstream* out, const IRListView*, const std::array<uint8_t, 0x10>& Arg) {
-  *out << fextl::fmt::format("{:02x}", fmt::join(Arg, ""));
-}
-
-void Dump(fextl::stringstream* out, const IRListView* IR) {
+void Dump(fextl::ostringstream* out, const IRListView* IR) {
   auto HeaderOp = IR->GetHeader();
 
   int8_t CurrentIndent = 0;

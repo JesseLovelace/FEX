@@ -13,6 +13,7 @@ $end_info$
 #include <FEXCore/Core/SignalDelegator.h>
 #include <FEXCore/Core/Context.h>
 #include <FEXCore/Core/CoreState.h>
+#include <FEXCore/Core/DiskCacheFileMapper.h>
 #include <FEXCore/Debug/InternalThreadState.h>
 #include <FEXCore/HLE/SyscallHandler.h>
 #include <FEXCore/Config/Config.h>
@@ -38,6 +39,7 @@ $end_info$
 #include "Common/TSOHandlerConfig.h"
 #include "Common/ImageTracker.h"
 #include "Common/InvalidationTracker.h"
+#include "Common/Threads.h"
 #include "Common/OvercommitTracker.h"
 #include "Common/CPUFeatures.h"
 #include "Common/Logging.h"
@@ -62,6 +64,7 @@ $end_info$
 #include <wine/debug.h>
 #include <wine/unixlib.h>
 
+<<<<<<< HEAD
 #include "IosTeb.h"
 
 using FEX::Windows::WOW64::CurrentTEB;
@@ -182,6 +185,8 @@ static constexpr uint32_t PAUSED {1U << 1};
 static constexpr uint32_t WOW_CPU_AREA_DIRTY {1U << 2};
 }; // namespace ControlBits
 
+=======
+>>>>>>> upstream/main
 struct TLS {
   enum class Slot : size_t {
     ENTRY_CONTEXT = WOW64_TLS_MAX_NUMBER - 1,  // 18
@@ -222,6 +227,10 @@ struct TLS {
   std::atomic<uint32_t>& ControlWord() const {
     // TODO: Change this when libc++ gains std::atomic_ref support
     return reinterpret_cast<std::atomic<uint32_t>&>(TEB->TlsSlots[FEXCore::ToUnderlying(Slot::CONTROL_WORD)]);
+  }
+
+  uint32_t* ControlWordAddress() const {
+    return reinterpret_cast<uint32_t*>(&TEB->TlsSlots[FEXCore::ToUnderlying(Slot::CONTROL_WORD)]);
   }
 
   CONTEXT*& EntryContext() const {
@@ -265,10 +274,21 @@ struct TLS {
   uint64_t& CachedCallRetSp() const {
     return reinterpret_cast<uint64_t&>(TEB->TlsSlots[FEXCore::ToUnderlying(Slot::CACHED_CALLRET_SP)]);
   }
+
+  CHPE_V2_CPU_AREA_INFO*& CpuArea() const {
+    return reinterpret_cast<__TEB*>(TEB)->ChpeV2CpuAreaInfo;
+  }
 };
+
+WOW64_CONTEXT* GetWow64Context() {
+  WOW64_CONTEXT* WowContext;
+  RtlWow64GetCurrentCpuArea(nullptr, reinterpret_cast<void**>(&WowContext), nullptr);
+  return WowContext;
+}
 
 struct FrontendThreadData {
   bool InLockedRWXRead {};
+<<<<<<< HEAD
   // MADEIRA ml1430: syscall parking for the code-buffer sweeper (see IosWowSyscallC).
   // IosInSim is the sweeper's per-thread "may be executing emitted code" byte; it is 0
   // only while the thread is blocked in an outermost-level syscall whose return can be
@@ -279,6 +299,14 @@ struct FrontendThreadData {
   bool IosSyscallArmed {};
   bool IosSweepRegistered {};
   uint32_t IosSyscallDepth {};
+=======
+  CHPE_V2_CPU_AREA_INFO CpuArea {};
+
+  FrontendThreadData(const TLS& TLS) {
+    CpuArea.SuspendDoorbell = reinterpret_cast<ULONG*>(&TLS.ThreadState()->CurrentFrame->SuspendDoorbell);
+    TLS.CpuArea() = &CpuArea;
+  }
+>>>>>>> upstream/main
 };
 
 class WowSyscallHandler;
@@ -549,13 +577,18 @@ void HandleImageUnmap(uint64_t Address, uint64_t Size) {
 } // namespace
 
 namespace Context {
+<<<<<<< HEAD
 // GUEST for every register field: a WOW64_CONTEXT is what the 32-bit guest observes, so Eip/Esp and
 // the rest are guest addresses below 4 GiB and go into CPUState unchanged - FEXCore applies the base
 // in the JIT. `Context` itself is a HOST pointer (ntdll's CPU area, or a caller stack temporary);
 // WowTEB is the GUEST TEB32 address, see GetWowTEB(). Applies to both directions and therefore to
 // BTCpuGetContext/BTCpuSetContext, which only move whole WOW64_CONTEXTs through ntdll.
 void LoadStateFromWowContext(FEXCore::Core::InternalThreadState* Thread, uint64_t WowTEB, WOW64_CONTEXT* Context) {
+=======
+void LoadStateFromWowContext(FEXCore::Core::InternalThreadState* Thread) {
+>>>>>>> upstream/main
   auto& State = Thread->CurrentFrame->State;
+  WOW64_CONTEXT* Context = GetWow64Context();
 
   // General register state
 
@@ -580,6 +613,7 @@ void LoadStateFromWowContext(FEXCore::Core::InternalThreadState* Thread, uint64_
 
   // The TEB is the only populated GDT entry by default
   auto GDT = State.GetSegmentFromIndex(State, (Context->SegFs & 0xffff));
+  uint64_t WowTEB = GetWowTEB(NtCurrentTeb());
   State.SetGDTBase(GDT, WowTEB);
   State.SetGDTLimit(GDT, 0xF'FFFFU);
   State.fs_cached = WowTEB;
@@ -604,7 +638,8 @@ void LoadStateFromWowContext(FEXCore::Core::InternalThreadState* Thread, uint64_
   State.AbridgedFTW = XSave->TagWord;
 }
 
-void StoreWowContextFromState(FEXCore::Core::InternalThreadState* Thread, WOW64_CONTEXT* Context) {
+void StoreWowContextFromState(WOW64_CONTEXT* Context) {
+  auto Thread = GetTLS().ThreadState();
   auto& State = Thread->CurrentFrame->State;
 
   // General register state
@@ -651,21 +686,13 @@ void StoreWowContextFromState(FEXCore::Core::InternalThreadState* Thread, WOW64_
   Context->FloatSave.Cr0NpxState = XSave->StatusWord | 0xffff0000;
 }
 
-NTSTATUS FlushThreadStateContext(HANDLE Thread) {
-  const auto [Err, TLS] = GetThreadTLS(Thread);
-  if (Err) {
-    return Err;
-  }
-
-  WOW64_CONTEXT TmpWowContext {.ContextFlags = WOW64_CONTEXT_FULL | WOW64_CONTEXT_EXTENDED_REGISTERS};
-
-  Context::StoreWowContextFromState(TLS.ThreadState(), &TmpWowContext);
-  return RtlWow64SetThreadContext(Thread, &TmpWowContext);
+void FlushThreadStateContext() {
+  StoreWowContextFromState(GetWow64Context());
 }
 
-void ReconstructThreadState(TLS TLS, CONTEXT* Context) {
+void ReconstructThreadState(CONTEXT* Context) {
   const auto& Config = SignalDelegator->GetConfig();
-  auto* Thread = TLS.ThreadState();
+  auto* Thread = GetTLS().ThreadState();
   auto& State = Thread->CurrentFrame->State;
 
   State.rip = CTX->RestoreRIPFromHostPC(Thread, Context->Pc);
@@ -685,27 +712,24 @@ void ReconstructThreadState(TLS TLS, CONTEXT* Context) {
   CTX->SetFlagsFromCompactedEFLAGS(Thread, EFlags);
 }
 
-WOW64_CONTEXT ReconstructWowContext(TLS TLS, CONTEXT* Context) {
+WOW64_CONTEXT* ReconstructWowContext(CONTEXT* Context) {
   if (!IsDispatcherAddress(Context->Pc)) {
-    ReconstructThreadState(TLS, Context);
+    ReconstructThreadState(Context);
   }
 
-  WOW64_CONTEXT WowContext {
-    .ContextFlags = WOW64_CONTEXT_ALL,
-  };
-
-  auto* XSave = reinterpret_cast<XSAVE_FORMAT*>(WowContext.ExtendedRegisters);
+  WOW64_CONTEXT* WowContext = GetWow64Context();
+  auto* XSave = reinterpret_cast<XSAVE_FORMAT*>(WowContext->ExtendedRegisters);
   XSave->ControlWord = 0x27f;
   XSave->MxCsr = 0x1f80;
 
-  Context::StoreWowContextFromState(TLS.ThreadState(), &WowContext);
+  StoreWowContextFromState(WowContext);
   return WowContext;
 }
 
 static std::optional<FEX::Windows::TSOHandlerConfig> HandlerConfig;
 
-bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
-  auto Thread = TLS.ThreadState();
+bool HandleUnalignedAccess(CONTEXT* Context) {
+  auto Thread = GetTLS().ThreadState();
   if (!Thread->CTX->IsAddressInCodeBuffer(Thread, Context->Pc)) {
     return false;
   }
@@ -716,6 +740,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
   return Result.has_value();
 }
 
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
 /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
  *
@@ -784,45 +809,39 @@ void LockJITContext(TLS TLS) {
     WOW64_CONTEXT* WowContext;
     RtlWow64GetCurrentCpuArea(nullptr, reinterpret_cast<void**>(&WowContext), nullptr);
     Context::LoadStateFromWowContext(TLS.ThreadState(), GetWowTEB(CurrentTEB()), WowContext);
+=======
+void LockJITContext() {
+  TLS TLS = GetTLS();
+  TLS.CpuArea()->InSimulation = -1;
+  LoadStateFromWowContext(TLS.ThreadState());
+}
+
+void UnlockJITContext() {
+  CHPE_V2_CPU_AREA_INFO* CpuArea = GetTLS().CpuArea();
+  CpuArea->InSimulation = 0;
+  if (*CpuArea->SuspendDoorbell) {
+    CONTEXT ResumeContext;
+    RtlCaptureContext(&ResumeContext);
+    if (*CpuArea->SuspendDoorbell) {
+      NtContinue(&ResumeContext, FALSE);
+    }
+>>>>>>> upstream/main
   }
 }
 
-void UnlockJITContext(TLS TLS) {
-  std::atomic_signal_fence(std::memory_order::seq_cst);
-  TLS.ControlWord().fetch_and(~ControlBits::IN_JIT, std::memory_order::relaxed);
-}
-
-class ScopedJITContextLock {
-private:
-  TLS TLSData;
-
-public:
-  ScopedJITContextLock(TLS TLSData)
-    : TLSData {TLSData} {
-    LockJITContext(TLSData);
-  }
-
-  ~ScopedJITContextLock() {
-    UnlockJITContext(TLSData);
-  }
-};
-
-bool HandleSuspendInterrupt(TLS TLS, CONTEXT* Context, uint64_t FaultAddress) {
-  if (FaultAddress != reinterpret_cast<uint64_t>(&TLS.ThreadState()->InterruptFaultPage)) {
+bool HandleSuspendInterrupt(CONTEXT* Context) {
+  static constexpr uint32_t SuspendTrapMagic {0xD4395FC0}; // brk #0xCAFE
+  if (*reinterpret_cast<uint32_t*>(Context->Pc) != SuspendTrapMagic) {
     return false;
   }
 
-  void* TmpAddress = reinterpret_cast<void*>(FaultAddress);
-  SIZE_T TmpSize = FEXCore::Utils::FEX_PAGE_SIZE;
-  ULONG TmpProt;
-  NtProtectVirtualMemory(NtCurrentProcess(), &TmpAddress, &TmpSize, PAGE_READWRITE, &TmpProt);
-
   // Since interrupts only happen at the start of blocks, the reconstructed state should be entirely accurate
-  ReconstructThreadState(TLS, Context);
+  ReconstructThreadState(Context);
+  FlushThreadStateContext();
 
   // Yield to the suspender
-  UnlockJITContext(TLS);
-  LockJITContext(TLS);
+  UnlockJITContext();
+  LockJITContext();
 
   // Adjust context to return to the dispatcher, reloading SRA from thread state
   const auto& Config = SignalDelegator->GetConfig();
@@ -831,6 +850,20 @@ bool HandleSuspendInterrupt(TLS TLS, CONTEXT* Context, uint64_t FaultAddress) {
   return true;
 }
 } // namespace Context
+
+// Calls a 1-argument function `Func` setting the parent unwind frame information to the given SP and PC
+__attribute__((naked)) extern "C" uint64_t SEHFrameTrampoline1Args(void* Arg0, void* Func, uint64_t Sp, uint64_t Pc) {
+  asm(".seh_proc SEHFrameTrampoline1Args;"
+      "stp x2, x3, [sp, #-0x10]!;"
+      ".seh_pushframe;"
+      "stp x29, x30, [sp, #-0x10]!;"
+      ".seh_save_fplr_x 16;"
+      ".seh_endprologue;"
+      "blr x1;"
+      "ldp x29, x30, [sp], 0x20;"
+      "ret;"
+      ".seh_endproc;");
+}
 
 // Calls a 2-argument function `Func` setting the parent unwind frame information to the given SP and PC
 __attribute__((naked)) extern "C" uint64_t SEHFrameTrampoline2Args(void* Arg0, void* Arg1, void* Func, uint64_t Sp, uint64_t Pc) {
@@ -848,16 +881,20 @@ __attribute__((naked)) extern "C" uint64_t SEHFrameTrampoline2Args(void* Arg0, v
 
 class WowSyscallHandler : public FEXCore::HLE::SyscallHandler, public FEXCore::Allocator::FEXAllocOperators {
 public:
-  WowSyscallHandler() {
-    OSABI = FEXCore::HLE::SyscallOSABI::OS_GENERIC;
-  }
+  WowSyscallHandler() = default;
 
+<<<<<<< HEAD
   static uint64_t HandleSyscallImpl(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) {
     // MADEIRA: ESP is a guest address, so every read through it goes via the window. ReturnRSP and
     // ReturnRIP stay GUEST, because they are written straight back into the guest's ESP/EIP below.
     const uint64_t ReturnRIP =
       *reinterpret_cast<uint32_t*>(GuestWindow::ToHost(Frame->State.gregs[FEXCore::X86State::REG_RSP])); // Return address from the stack
     uint64_t ReturnRSP = Frame->State.gregs[FEXCore::X86State::REG_RSP] + 4; // Stack pointer after popping return address
+=======
+  static void HandleSyscallImpl(FEXCore::Core::CpuStateFrame* Frame) {
+    const uint64_t ReturnRIP = *(uint32_t*)(Frame->State.gregs[FEXCore::X86State::REG_RSP]); // Return address from the stack
+    uint64_t ReturnRSP = Frame->State.gregs[FEXCore::X86State::REG_RSP] + 4;                 // Stack pointer after popping return address
+>>>>>>> upstream/main
     uint64_t ReturnRAX = 0;
 
     if (Frame->State.rip == (uint64_t)BridgeInstrs::UnixCall) {
@@ -867,8 +904,10 @@ public:
         ULONG32 Args;
       }* StackArgs = reinterpret_cast<StackLayout*>(GuestWindow::ToHost(ReturnRSP));
 
-      ReturnRSP += sizeof(StackLayout);
+      Frame->State.gregs[FEXCore::X86State::REG_RSP] = ReturnRSP + sizeof(StackLayout);
+      Frame->State.rip = ReturnRIP;
 
+<<<<<<< HEAD
       const auto TLS = GetTLS();
 #ifdef FEX_IOS_HOST
       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
@@ -908,23 +947,35 @@ public:
     // If a new context has been set, use it directly and don't return to the syscall caller
     if (Frame->State.rip == (uint64_t)BridgeInstrs::Syscall || Frame->State.rip == (uint64_t)BridgeInstrs::UnixCall) {
       Frame->State.gregs[FEXCore::X86State::REG_RAX] = ReturnRAX;
+=======
+      Context::FlushThreadStateContext();
+      Context::UnlockJITContext();
+      ReturnRAX = static_cast<uint64_t>(WineUnixCall(StackArgs->Handle, StackArgs->ID, ULongToPtr(StackArgs->Args)));
+      Context::LockJITContext();
+      Frame->State.gregs[FEXCore::X86State::REG_RAX] = ReturnRAX;
+    } else if (Frame->State.rip == (uint64_t)BridgeInstrs::Syscall) {
+      const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
+
+>>>>>>> upstream/main
       Frame->State.gregs[FEXCore::X86State::REG_RSP] = ReturnRSP;
       Frame->State.rip = ReturnRIP;
-    }
 
-    // NORETURNEDRESULT causes this result to be ignored since we restore all registers back from memory after a syscall anyway
-    return 0;
+      Context::FlushThreadStateContext();
+      Context::UnlockJITContext();
+      Wow64ProcessPendingCrossProcessItems();
+      ReturnRAX = static_cast<uint64_t>(Wow64SystemServiceEx(static_cast<UINT>(EntryRAX), reinterpret_cast<UINT*>(ReturnRSP + 4)));
+      Context::LockJITContext();
+      Frame->State.gregs[FEXCore::X86State::REG_RAX] = ReturnRAX;
+    }
   }
 
-  uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) override {
+  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
     const auto TLS = GetTLS();
     // Stash the the context pointer on the stack, as Simulate can be called from this syscall handler which would overwrite it
     CONTEXT* EntryContext = TLS.EntryContext();
     // Call the syscall handler with unwind information pointing to Simulate as its caller
-    uint64_t Ret = SEHFrameTrampoline2Args(reinterpret_cast<void*>(Frame), reinterpret_cast<void*>(Args),
-                                           reinterpret_cast<void*>(&HandleSyscallImpl), EntryContext->Sp, EntryContext->Pc);
+    SEHFrameTrampoline1Args(reinterpret_cast<void*>(Frame), reinterpret_cast<void*>(&HandleSyscallImpl), EntryContext->Sp, EntryContext->Pc);
     TLS.EntryContext() = EntryContext;
-    return Ret;
   }
 
   // MADEIRA: this is the FEXCore <-> tracker boundary. FEXCore speaks GUEST addresses here;
@@ -1073,6 +1124,7 @@ extern "C" __attribute__((naked)) void IosWowSyscallEntry() {
 
 void BTCpuProcessInit() {
   FEX::Windows::InitCRTProcess();
+<<<<<<< HEAD
 
 #ifdef FEX_IOS_HOST
   /* MADEIRA: import the TEB TSD slot offset before anything reads a TEB. A missing or zero export
@@ -1107,6 +1159,10 @@ void BTCpuProcessInit() {
   // MADEIRA: keep the path alive; BaseName returns a view into it (it used to point into a
   // temporary that was already destroyed).
   const fextl::string ExecutablePath = FEX::Windows::GetExecutableFilePath();
+=======
+  FEX::Windows::SetupThreadHandlers();
+  const auto ExecutablePath = FEX::Windows::GetExecutableFilePath();
+>>>>>>> upstream/main
   const auto ExecutableName = FEX::Windows::BaseName(ExecutablePath);
   FEX::Config::LoadConfig(fextl::string {ExecutableName}, _environ, FEX::ReadPortabilityInformation());
   FEXCore::Config::ReloadMetaLayer();
@@ -1114,6 +1170,8 @@ void BTCpuProcessInit() {
 
   FEXCore::Config::Set(FEXCore::Config::CONFIG_INTERPRETER_INSTALLED, "0");
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "0");
+  FEXCore::Config::Set(FEXCore::Config::CONFIG_APP_FILENAME, ExecutablePath);
+  FEXCore::Config::Set(FEXCore::Config::CONFIG_APP_CONFIG_NAME, ExecutableName);
 
   /* MADEIRA ml950: 64-bit x87 is the DEFAULT for 32-bit guests on this host.
    *
@@ -1235,15 +1293,19 @@ void BTCpuProcessInit() {
 
   SignalDelegator = fextl::make_unique<FEX::DummyHandlers::DummySignalDelegator>();
   SyscallHandler = fextl::make_unique<WowSyscallHandler>();
-  const auto NtDll = GetModuleHandle("ntdll.dll");
+  const auto NtDll = GetModuleHandleW(L"ntdll.dll");
   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
   OvercommitTracker.emplace(IsWine);
 
   FEX::Windows::Allocator::SetupHooks(NtDll);
   FEX::Windows::UnixLib::Init(NtDll);
+  if (FEX::Windows::UnixLib::Available()) {
+    FEXCore::DiskCache::SetFileMapper(FEX::Windows::UnixLib::MapFile);
+  }
 
   {
-    auto HostFeatures = FEX::Windows::CPUFeatures::FetchHostFeatures(IsWine, FEXCore::HostFeatures::HostTypeEnum::Wow64);
+    auto HostFeatures =
+      FEX::Windows::CPUFeatures::FetchHostFeatures(IsWine, FEXCore::HostFeatures::HostTypeEnum::Wow64, FEX::Windows::UnixLib::GetPID());
     CTX = FEXCore::Context::Context::CreateNewContext(HostFeatures);
   }
 
@@ -1440,7 +1502,7 @@ void BTCpuThreadInit() {
   static constexpr size_t DefaultWow64CS {4};
   std::scoped_lock Lock(ThreadCreationMutex);
   FEX::Windows::InitCRTThread();
-  auto* Thread = CTX->CreateThread(0, 0);
+  auto* Thread = CTX->CreateThread();
 
   // Default segment setup.
   auto Frame = Thread->CurrentFrame;
@@ -1471,12 +1533,15 @@ void BTCpuThreadInit() {
   // the wrong TEB". A non-zero `was` value answers that directly, on the thread that claims it.
   const uint64_t PrevSlotValue = TLS.RawThreadState();
   TLS.ThreadState() = Thread;
+<<<<<<< HEAD
   TLS.ControlWord().fetch_or(ControlBits::WOW_CPU_AREA_DIRTY, std::memory_order::relaxed);
   LogMan::Msg::EFmt("[wow64-tls] tid={:#x} teb={} slot[{}]=ThreadState {} (was {:#x}{})", GetCurrentThreadId(),
                     static_cast<void*>(TLS.TEB), TLS.ThreadStateSlot, static_cast<void*>(Thread), PrevSlotValue,
                     PrevSlotValue ? " - NOT ZERO, slot content did not come from this module" : "");
+=======
+>>>>>>> upstream/main
 
-  Thread->FrontendPtr = new FrontendThreadData();
+  Thread->FrontendPtr = new FrontendThreadData(TLS);
 
   // MADEIRA ml1430: route this thread's syscalls through the parking entry and let the
   // code-buffer sweeper see it (see IosWowPark).
@@ -1499,18 +1564,21 @@ void BTCpuThreadTerm(HANDLE Thread, LONG ExitCode) {
     return;
   }
 
-  auto ThreadDup = FEX::Windows::DupHandle(Thread, THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME);
+  auto ThreadDup = FEX::Windows::DupHandle(Thread, THREAD_QUERY_INFORMATION | THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT);
 
   THREAD_BASIC_INFORMATION Info;
   if (auto Err = NtQueryInformationThread(*ThreadDup, ThreadBasicInformation, &Info, sizeof(Info), nullptr); Err) {
     return;
   }
 
+  LogMan::Msg::IFmt("Terminating {}", Info.ClientId.UniqueThread);
   const auto ThreadTID = reinterpret_cast<uint64_t>(Info.ClientId.UniqueThread);
   bool Self = ThreadTID == GetCurrentThreadId();
   if (!Self) {
+    CONTEXT TmpContext;
     // If we are suspending a thread that isn't ourselves, try to suspend it first so we know internal JIT locks aren't being held.
     RtlWow64SuspendThread(*ThreadDup, NULL);
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
     /* MADEIRA ml1200: on iOS the suspend above does not stop the thread (the port's
      * suspend is logical unless MADEIRA_REAL_SUSPEND is on), so freeing its JIT state
@@ -1526,6 +1594,11 @@ void BTCpuThreadTerm(HANDLE Thread, LONG ExitCode) {
                       ThreadTID, GetCurrentThreadId());
     return;
 #endif
+=======
+    // This will wait for the thread to be suspended
+    TmpContext.ContextFlags = CONTEXT_CONTROL;
+    NtGetContextThread(*ThreadDup, &TmpContext);
+>>>>>>> upstream/main
   }
 
   auto [Err, TLS] = GetThreadTLS(*ThreadDup);
@@ -1548,11 +1621,15 @@ void BTCpuThreadTerm(HANDLE Thread, LONG ExitCode) {
   }
   auto ThreadState = TLS.ThreadState();
 
+<<<<<<< HEAD
   // MADEIRA ml1430: the sweeper's registry points into the frontend data; leave it (and
   // wait out any sweep in flight) before that is freed. No locks are held here.
   if (GetFrontendThreadData(ThreadState)->IosSweepRegistered) {
     IosSweepUnregisterThread(ThreadState);
   }
+=======
+  TLS.CpuArea() = nullptr;
+>>>>>>> upstream/main
   delete GetFrontendThreadData(ThreadState);
 
   // GDT and LDT are mirrored, only free one.
@@ -1615,6 +1692,7 @@ void* __wine_get_unix_opcode() {
  * engages -- together ~1180 requests/s of the measured ~3700/s.
  */
 NTSTATUS BTCpuGetContext(HANDLE Thread, HANDLE Process, void* Unknown, WOW64_CONTEXT* Context) {
+<<<<<<< HEAD
   const bool Self = Thread == GetCurrentThread();
 
   if (!Self && !FEX::Windows::ValidateHandleAccess(Thread, THREAD_GET_CONTEXT)) {
@@ -1636,12 +1714,16 @@ NTSTATUS BTCpuGetContext(HANDLE Thread, HANDLE Process, void* Unknown, WOW64_CON
   }
 
   return RtlWow64GetThreadContext(Target, Context);
+=======
+  return RtlWow64GetThreadContext(Thread, Context);
+>>>>>>> upstream/main
 }
 
 // MADEIRA ml970: same self short-circuit as BTCpuGetContext above; see the
 // comment there for the measurement and for why the duplicate was the thing
 // that forced Wine's cross-thread context path.
 NTSTATUS BTCpuSetContext(HANDLE Thread, HANDLE Process, void* Unknown, WOW64_CONTEXT* Context) {
+<<<<<<< HEAD
   const bool Self = Thread == GetCurrentThread();
 
   if (!Self && !FEX::Windows::ValidateHandleAccess(Thread, THREAD_SET_CONTEXT)) {
@@ -1682,6 +1764,9 @@ NTSTATUS BTCpuSetContext(HANDLE Thread, HANDLE Process, void* Unknown, WOW64_CON
 
   Context::LoadStateFromWowContext(TLS.ThreadState(), GetWowTEB(TLS.TEB), &TmpContext);
   return STATUS_SUCCESS;
+=======
+  return RtlWow64SetThreadContext(Thread, Context);
+>>>>>>> upstream/main
 }
 
 // .seh_pushframe doesn't restore the frame pointer, so if when unwinding from RtlCaptureContext an operation is used
@@ -1712,11 +1797,13 @@ extern "C" void BTCpuSimulateImpl(CONTEXT* entry_context) {
   TLS.EntryContext() = entry_context;
   TLS.CachedCallRetSp() = TLS.ThreadState()->CurrentFrame->State.callret_sp;
 
-  Context::ScopedJITContextLock Lk {TLS};
+  Context::LockJITContext();
   CTX->ExecuteThread(TLS.ThreadState());
+  Context::UnlockJITContext();
 }
 
 NTSTATUS BTCpuSuspendLocalThread(HANDLE Thread, ULONG* Count) {
+<<<<<<< HEAD
   if (!FEX::Windows::ValidateHandleAccess(Thread, THREAD_SUSPEND_RESUME)) {
     return STATUS_ACCESS_DENIED;
   }
@@ -1809,12 +1896,16 @@ NTSTATUS BTCpuSuspendLocalThread(HANDLE Thread, ULONG* Count) {
   TLS.ControlWord().fetch_and(~ControlBits::PAUSED, std::memory_order::relaxed);
 
   return Err;
+=======
+  return NtSuspendThread(Thread, Count);
+>>>>>>> upstream/main
 }
 
 // Returns true if exception dispatch should be halted and the execution context restored to Ptrs->Context
 bool BTCpuResetToConsistentStateImpl(EXCEPTION_POINTERS* Ptrs) {
   auto* Context = Ptrs->ContextRecord;
   auto* Exception = Ptrs->ExceptionRecord;
+<<<<<<< HEAD
   auto TLS = GetTLS();
 
   // MADEIRA ml800: an exception can reach this module before the faulting thread has any FEX
@@ -1848,6 +1939,9 @@ bool BTCpuResetToConsistentStateImpl(EXCEPTION_POINTERS* Ptrs) {
     return false;
   }
 
+=======
+  auto Thread = GetTLS().ThreadState();
+>>>>>>> upstream/main
   FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedSignalTime);
 
   if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
@@ -1872,11 +1966,6 @@ bool BTCpuResetToConsistentStateImpl(EXCEPTION_POINTERS* Ptrs) {
       return true;
     }
 
-    if (Context::HandleSuspendInterrupt(TLS, Context, FaultAddress)) {
-      LogMan::Msg::DFmt("Resumed from suspend");
-      return true;
-    }
-
     if (FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread, reinterpret_cast<void*>(FaultAddress), Context->X,
                                                        reinterpret_cast<__uint128_t*>(Context->V), &Context->Pc)) {
       return true;
@@ -1890,8 +1979,13 @@ bool BTCpuResetToConsistentStateImpl(EXCEPTION_POINTERS* Ptrs) {
         // needs the fault address in the guest namespace - unlike everything else on this path.
         const auto GuestFaultAddress = GuestWindow::ToGuestIfInWindow(FaultAddress);
         if (CTX->IsAddressInCodeBuffer(Thread, Context->Pc) && !CTX->IsCurrentBlockSingleInst(Thread) &&
+<<<<<<< HEAD
             CTX->IsAddressInCurrentBlock(Thread, GuestFaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE)) {
           Context::ReconstructThreadState(TLS, Context);
+=======
+            CTX->IsAddressInCurrentBlock(Thread, FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE)) {
+          Context::ReconstructThreadState(Context);
+>>>>>>> upstream/main
           LogMan::Msg::DFmt("Handled inline self-modifying code: pc: {:X} rip: {:X} fault: {:X}", Context->Pc,
                             Thread->CurrentFrame->State.rip, FaultAddress);
 
@@ -1911,30 +2005,33 @@ bool BTCpuResetToConsistentStateImpl(EXCEPTION_POINTERS* Ptrs) {
     return false;
   }
 
+  if (Exception->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION && Context::HandleSuspendInterrupt(Context)) {
+    LogMan::Msg::DFmt("Resumed from suspend");
+    return true;
+  }
+
   FEXCORE_PROFILE_INSTANT_INCREMENT(Thread, AccumulatedSIGBUSCount, 1);
-  if (Exception->ExceptionCode == EXCEPTION_DATATYPE_MISALIGNMENT && Context::HandleUnalignedAccess(TLS, Context)) {
+  if (Exception->ExceptionCode == EXCEPTION_DATATYPE_MISALIGNMENT && Context::HandleUnalignedAccess(Context)) {
     LogMan::Msg::DFmt("Handled unaligned atomic: new pc: {:X}", Context->Pc);
     return true;
   }
 
   LogMan::Msg::DFmt("Reconstructing context");
 
-  WOW64_CONTEXT WowContext = Context::ReconstructWowContext(TLS, Context);
-  LogMan::Msg::DFmt("pc: {:X} eip: {:X}", Context->Pc, WowContext.Eip);
+  WOW64_CONTEXT* WowContext = Context::ReconstructWowContext(Context);
+  LogMan::Msg::DFmt("pc: {:X} eip: {:X} code: {:X}", Context->Pc, WowContext->Eip, Exception->ExceptionCode);
 
   auto& Fault = Thread->CurrentFrame->SynchronousFaultData;
-  *Exception = FEX::Windows::HandleGuestException(Fault, *Exception, WowContext.Eip, WowContext.Eax, WowContext.Ecx);
-  if (Exception->ExceptionCode == EXCEPTION_SINGLE_STEP) {
-    WowContext.EFlags &= ~(1 << FEXCore::X86State::RFLAG_TF_RAW_LOC);
+  BOOL FirstChance = TRUE;
+  EXCEPTION_RECORD GuestException =
+    FEX::Windows::HandleGuestException(Fault, *Exception, WowContext->Eip, WowContext->Eax, WowContext->Ecx, FirstChance);
+  if (GuestException.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+    WowContext->EFlags &= ~(1 << FEXCore::X86State::RFLAG_TF_RAW_LOC);
   }
   // wow64.dll will handle adjusting PC in the dispatched context after a breakpoint
 
-  BTCpuSetContext(GetCurrentThread(), GetCurrentProcess(), nullptr, &WowContext);
-  Context::UnlockJITContext(TLS);
-
-  // Replace the host context with one captured before JIT entry so host code can unwind
-  memcpy(Context, TLS.EntryContext(), sizeof(*Context));
-
+  Context::UnlockJITContext();
+  NtRaiseException(&GuestException, GetTLS().EntryContext(), FirstChance);
   return false;
 }
 
@@ -2037,6 +2134,7 @@ void BTCpuNotifyUnmapViewOfSection(void* Address, BOOL After, ULONG Status) {
 // HOST: wine/dlls/wow64/file.c:672 `buffer = get_ptr( &args )` = guest_ptr32(), passed verbatim to
 // both the notification (:680, :683) and NtReadFile itself. Handle is a handle - never offset.
 void BTCpuNotifyReadFile(HANDLE Handle, void* Address, SIZE_T Size, BOOL After, NTSTATUS Status) {
+<<<<<<< HEAD
   // MADEIRA: wow64.dll calls this from NtReadFile, which the 32-bit loader uses before this
   // thread has any FEX state - so the slot read has to be the hardened one, and a thread with no
   // state has no RWX read to track. Same reasoning as the exception handler.
@@ -2060,6 +2158,17 @@ void BTCpuNotifyReadFile(HANDLE Handle, void* Address, SIZE_T Size, BOOL After, 
       CTX->GetCodeInvalidationMutex().unlock();
       ThreadCreationMutex.unlock();
     }
+=======
+  auto* ThreadState = GetTLS().ThreadState();
+  if (!InvalidationTracker || !ThreadState) {
+    return;
+  }
+
+  // See arm64ec `BTCpu64NotifyReadFile` for why this like this.
+  if (After && Status == STATUS_SUCCESS) {
+    std::scoped_lock Lock(ThreadCreationMutex);
+    InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), false);
+>>>>>>> upstream/main
   }
 }
 

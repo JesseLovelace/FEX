@@ -86,19 +86,17 @@ uint32_t ThreadManager::StatAlloc::FrontendAllocateSlots(uint32_t NewSize) {
 
   if (ftruncate(fd, NewSize) == -1) {
     LogMan::Msg::EFmt("[StatAlloc] ftruncate more failed");
-
-    goto err;
+    close(fd);
+    return CurrentSize;
   }
 
-  {
-    auto SharedBase = FEXCore::Allocator::mmap(Base, NewSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
-    if (SharedBase == MAP_FAILED) {
-      LogMan::Msg::EFmt("[StatAlloc] allocate more mmap shm failed");
-      goto err;
-    }
+  auto SharedBase = FEXCore::Allocator::mmap(Base, NewSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
+  if (SharedBase == MAP_FAILED) {
+    LogMan::Msg::EFmt("[StatAlloc] allocate more mmap shm failed");
+    close(fd);
+    return CurrentSize;
   }
 
-err:
   close(fd);
   return NewSize;
 }
@@ -171,8 +169,8 @@ void ThreadManager::SetThreadName(const char* name) {
 
 constexpr size_t CALLRET_STACK_ALLOC_SIZE = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
 
-FEX::HLE::ThreadStateObject* ThreadManager::CreateThread(uint64_t InitialRIP, uint64_t StackPointer, const FEXCore::Core::CPUState* NewThreadState,
-                                                         uint64_t ParentTID, FEX::HLE::ThreadStateObject* InheritThread) {
+FEX::HLE::ThreadStateObject*
+ThreadManager::CreateThread(const FEXCore::Core::CPUState* NewThreadState, uint64_t ParentTID, FEX::HLE::ThreadStateObject* InheritThread) {
   auto ThreadStateObject = new FEX::HLE::ThreadStateObject;
 
   ThreadStateObject->ThreadInfo.parent_tid = ParentTID;
@@ -180,7 +178,7 @@ FEX::HLE::ThreadStateObject* ThreadManager::CreateThread(uint64_t InitialRIP, ui
 
   ThreadStateObject->ThreadInfo.TID = FHU::Syscalls::gettid();
 
-  ThreadStateObject->Thread = CTX->CreateThread(InitialRIP, StackPointer, NewThreadState);
+  ThreadStateObject->Thread = CTX->CreateThread(NewThreadState);
   auto Frame = ThreadStateObject->Thread->CurrentFrame;
 
   // Allocate the call-ret stack with guard pages on both sides

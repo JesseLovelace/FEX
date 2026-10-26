@@ -7,7 +7,7 @@ constexpr DispatchTableEntry OpDispatch_DDDTable[] = {
   {0x0C, 1, &OpDispatchBuilder::PI2FWOp},
   {0x0D, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::Vector_CVT_Int_To_Float, OpSize::i32Bit, false, false>},
   {0x1C, 1, &OpDispatchBuilder::PF2IWOp},
-  {0x1D, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::Vector_CVT_Float_To_Int, OpSize::i32Bit, false, false>},
+  {0x1D, 1, &OpDispatchBuilder::PF2IDOp},
 
   {0x86, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorUnaryOp, IR::OP_VFRECPPRECISION, OpSize::i32Bit>},
   {0x87, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::RSqrt3DNowOp, false>},
@@ -26,8 +26,8 @@ constexpr DispatchTableEntry OpDispatch_DDDTable[] = {
   {0xA0, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPFCMPOp, 2>},
   {0xA4, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorALUOp, IR::OP_VFMAX, OpSize::i32Bit>},
   // Can be treated as a move
-  {0xA6, 1, &OpDispatchBuilder::MOVVectorUnalignedOp},
-  {0xA7, 1, &OpDispatchBuilder::MOVVectorUnalignedOp},
+  {0xA6, 1, &OpDispatchBuilder::MOVVectorUnalignedNoNopOp},
+  {0xA7, 1, &OpDispatchBuilder::MOVVectorUnalignedNoNopOp},
 
   {0xAA, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorALUROp, IR::OP_VFSUB, OpSize::i32Bit>},
   {0xAE, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorALUOp, IR::OP_VFADDP, OpSize::i32Bit>},
@@ -35,7 +35,7 @@ constexpr DispatchTableEntry OpDispatch_DDDTable[] = {
   {0xB0, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPFCMPOp, 0>},
   {0xB4, 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VectorALUOp, IR::OP_VFMUL, OpSize::i32Bit>},
   // Can be treated as a move
-  {0xB6, 1, &OpDispatchBuilder::MOVVectorUnalignedOp},
+  {0xB6, 1, &OpDispatchBuilder::MOVVectorUnalignedNoNopOp},
   {0xB7, 1, &OpDispatchBuilder::PMULHRWOp},
 
   {0xBB, 1, &OpDispatchBuilder::PSWAPDOp},

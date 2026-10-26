@@ -67,11 +67,13 @@ void OpDispatchBuilder::FLD(OpcodeArgs, IR::OpSize Width) {
     ConvertedData = _F80CVTTo(Data, Width);
   }
   _PushStack(ConvertedData, Data, Width);
+  StoreX87FIP(Op);
 }
 
 // Float LoaD operation with memory operand
 void OpDispatchBuilder::FLDFromStack(OpcodeArgs) {
   _CopyPushStack(Op->OP & 7);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FBLD(OpcodeArgs) {
@@ -79,18 +81,21 @@ void OpDispatchBuilder::FBLD(OpcodeArgs) {
   Ref Data = LoadSourceFPR_WithOpSize(Op, Op->Src[0], OpSize::f80Bit, Op->Flags);
   Ref ConvertedData = _F80BCDLoad(Data);
   _PushStack(ConvertedData, Invalid(), OpSize::iInvalid);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FBSTP(OpcodeArgs) {
   Ref converted = _F80BCDStore(_ReadStackValue(0));
   StoreResultFPR_WithOpSize(Op, Op->Dest, converted, OpSize::f80Bit, OpSize::i8Bit);
   _PopStackDestroy();
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FLD_Const(OpcodeArgs, NamedVectorConstant K) {
   // Update TOP
   Ref Data = LoadAndCacheNamedVectorConstant(OpSize::i128Bit, K);
   _PushStack(Data, Data, OpSize::f80Bit);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FILD(OpcodeArgs) {
@@ -122,6 +127,7 @@ void OpDispatchBuilder::FILD(OpcodeArgs) {
 
   Ref ConvertedData = _VLoadTwoGPRs(shifted, upper);
   _PushStack(ConvertedData, Invalid(), OpSize::iInvalid);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FST(OpcodeArgs, IR::OpSize Width) {
@@ -135,17 +141,17 @@ void OpDispatchBuilder::FST(OpcodeArgs, IR::OpSize Width) {
   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FSTToStack(OpcodeArgs) {
   const uint8_t Offset = Op->OP & 7;
-  if (Offset != 0) {
-    _StoreStackToStack(Offset);
-  }
+  _StoreStackToStack(Offset);
 
   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 // Store integer to memory (possibly with truncation)
@@ -172,8 +178,9 @@ void OpDispatchBuilder::FIST(OpcodeArgs, bool Truncate) {
     Ref IsOverflow = _NZCVSelect01(CondClass::UGE);
 
     // Set Invalid Operation flag if overflow or special value
+    // The x87 exception flags are sticky. Preserve earlier result
     Ref InvalidFlag = _Or(OpSize::i64Bit, IsSpecial, IsOverflow);
-    SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(InvalidFlag);
+    SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(_Or(OpSize::i32Bit, GetRFLAG(FEXCore::X86State::X87FLAG_IE_LOC), InvalidFlag));
   }
 
   Data = _F80CVTInt(Size, Data, Truncate);
@@ -184,6 +191,7 @@ void OpDispatchBuilder::FIST(OpcodeArgs, bool Truncate) {
   if ((Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) != 0) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FADD(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispatchBuilder::OpResult ResInST0) {
@@ -198,6 +206,7 @@ void OpDispatchBuilder::FADD(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispa
     if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
       _PopStackDestroy();
     }
+    StoreX87FIP(Op);
     return;
   }
 
@@ -214,6 +223,7 @@ void OpDispatchBuilder::FADD(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispa
 
   // top of stack is at offset zero
   _F80AddValue(0, Arg);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FMUL(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispatchBuilder::OpResult ResInST0) {
@@ -228,6 +238,7 @@ void OpDispatchBuilder::FMUL(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispa
     if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
       _PopStackDestroy();
     }
+    StoreX87FIP(Op);
     return;
   }
 
@@ -248,6 +259,7 @@ void OpDispatchBuilder::FMUL(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispa
   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FDIV(OpcodeArgs, IR::OpSize Width, bool Integer, bool Reverse, OpDispatchBuilder::OpResult ResInST0) {
@@ -265,6 +277,7 @@ void OpDispatchBuilder::FDIV(OpcodeArgs, IR::OpSize Width, bool Integer, bool Re
     if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
       _PopStackDestroy();
     }
+    StoreX87FIP(Op);
     return;
   }
 
@@ -289,6 +302,7 @@ void OpDispatchBuilder::FDIV(OpcodeArgs, IR::OpSize Width, bool Integer, bool Re
   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FSUB(OpcodeArgs, IR::OpSize Width, bool Integer, bool Reverse, OpDispatchBuilder::OpResult ResInST0) {
@@ -306,6 +320,7 @@ void OpDispatchBuilder::FSUB(OpcodeArgs, IR::OpSize Width, bool Integer, bool Re
     if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
       _PopStackDestroy();
     }
+    StoreX87FIP(Op);
     return;
   }
 
@@ -330,6 +345,7 @@ void OpDispatchBuilder::FSUB(OpcodeArgs, IR::OpSize Width, bool Integer, bool Re
   if (Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 Ref OpDispatchBuilder::GetX87FTW_Helper() {
@@ -399,7 +415,8 @@ void OpDispatchBuilder::X87FNSTENV(OpcodeArgs) {
 
   {
     // Instruction Offset
-    _StoreMemGPR(Size, ZeroConst, Mem, Constant(IR::OpSizeToSize(Size) * 3), Size, MemOffsetType::SXTX, 1);
+    auto FIP = _LoadContextGPR(OpSize::i64Bit, offsetof(FEXCore::Core::CPUState, FIP));
+    _StoreMemGPR(Size, FIP, Mem, Constant(IR::OpSizeToSize(Size) * 3), Size, MemOffsetType::SXTX, 1);
   }
 
   {
@@ -497,7 +514,8 @@ void OpDispatchBuilder::X87FNSAVE(OpcodeArgs) {
 
   {
     // Instruction Offset
-    _StoreMemGPR(Size, ZeroConst, Mem, Constant(IR::OpSizeToSize(Size) * 3), Size, MemOffsetType::SXTX, 1);
+    auto FIP = _LoadContextGPR(OpSize::i64Bit, offsetof(FEXCore::Core::CPUState, FIP));
+    _StoreMemGPR(Size, FIP, Mem, Constant(IR::OpSizeToSize(Size) * 3), Size, MemOffsetType::SXTX, 1);
   }
 
   {
@@ -567,6 +585,12 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
     SetX87FTW(_LoadMemGPR(Size, Mem, Constant(IR::OpSizeToSize(Size) * 2), Size, MemOffsetType::SXTX, 1));
   }
 
+  {
+    // FIP
+    auto FIP = _LoadMemGPR(Size, Mem, Constant(IR::OpSizeToSize(Size) * 3), Size, MemOffsetType::SXTX, 1);
+    _StoreContextGPR(OpSize::i64Bit, FIP, offsetof(FEXCore::Core::CPUState, FIP));
+  }
+
   auto SevenConst = Constant(7);
   auto low = Constant(~0ULL);
   auto high = Constant(0xFFFF);
@@ -575,7 +599,7 @@ void OpDispatchBuilder::X87FRSTOR(OpcodeArgs) {
   for (int i = 0; i < 7; ++i) {
     Ref Reg = _LoadMemFPR(OpSize::i128Bit, Mem, Constant((IR::OpSizeToSize(Size) * 7) + (10 * i)), OpSize::i8Bit, MemOffsetType::SXTX, 1);
     // Mask off the top bits
-    Reg = _VAnd(OpSize::i128Bit, OpSize::i128Bit, Reg, Mask);
+    Reg = _VAnd(OpSize::i128Bit, Reg, Mask);
     if (ReducedPrecisionMode) {
       // Convert to double precision
       Reg = _F80CVT(OpSize::i64Bit, Reg);
@@ -620,6 +644,7 @@ void OpDispatchBuilder::FXCH(OpcodeArgs) {
     _F80StackXchange(Offset);
   }
   SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Constant(0));
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87FYL2X(OpcodeArgs, bool IsFYL2XP1) {
@@ -628,6 +653,7 @@ void OpDispatchBuilder::X87FYL2X(OpcodeArgs, bool IsFYL2XP1) {
   } else {
     _F80FYL2XStack();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDispatchBuilder::FCOMIFlags WhichFlags, bool PopTwice) {
@@ -667,7 +693,6 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
     SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(HostFlag_Unordered);
     SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(HostFlag_ZF);
   } else {
-    // OF, SF, AF, PF all undefined
     SetCFDirect(HostFlag_CF);
     SetRFLAG<FEXCore::X86State::RFLAG_ZF_RAW_LOC>(HostFlag_ZF);
 
@@ -675,10 +700,17 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
     // TODO: This could perhaps be optimized?
     auto PF = _Xor(OpSize::i32Bit, HostFlag_Unordered, Constant(1));
     SetRFLAG<FEXCore::X86State::RFLAG_PF_RAW_LOC>(PF);
+
+    // Intel: OF, SF, and AF set to zero
+    // AMD:   no mention of OF, SF and AF but actual hardware seems to always zero
+    SetRFLAG<FEXCore::X86State::RFLAG_OF_RAW_LOC>(Constant(0));
+    SetRFLAG<FEXCore::X86State::RFLAG_SF_RAW_LOC>(Constant(0));
+    SetRFLAG<FEXCore::X86State::RFLAG_AF_RAW_LOC>(Constant(0));
   }
 
   // Set Invalid Operation flag when unordered (NaN comparison)
-  SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(HostFlag_Unordered);
+  // The x87 exception flags are sticky. Preserve earlier result
+  SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(_Or(OpSize::i32Bit, GetRFLAG(FEXCore::X86State::X87FLAG_IE_LOC), HostFlag_Unordered));
 
   if (PopTwice) {
     _PopStackDestroy();
@@ -686,6 +718,7 @@ void OpDispatchBuilder::FCOMI(OpcodeArgs, IR::OpSize Width, bool Integer, OpDisp
   } else if ((Op->TableInfo->Flags & X86Tables::InstFlags::FLAGS_POP) != 0) {
     _PopStackDestroy();
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::FTST(OpcodeArgs) {
@@ -703,7 +736,9 @@ void OpDispatchBuilder::FTST(OpcodeArgs) {
   SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(HostFlag_ZF);
 
   // Set Invalid Operation flag when unordered (NaN comparison)
-  SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(HostFlag_Unordered);
+  // The x87 exception flags are sticky. Preserve earlier result
+  SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(_Or(OpSize::i32Bit, GetRFLAG(FEXCore::X86State::X87FLAG_IE_LOC), HostFlag_Unordered));
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87OpHelper(OpcodeArgs, FEXCore::IR::IROps IROp, bool ZeroC2) {
@@ -711,6 +746,7 @@ void OpDispatchBuilder::X87OpHelper(OpcodeArgs, FEXCore::IR::IROps IROp, bool Ze
   if (ZeroC2) {
     SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(Constant(0));
   }
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87ModifySTP(OpcodeArgs, bool Inc) {
@@ -719,6 +755,10 @@ void OpDispatchBuilder::X87ModifySTP(OpcodeArgs, bool Inc) {
   } else {
     _DecStackTop();
   }
+
+  // C1 set to 0
+  SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Constant(0));
+  StoreX87FIP(Op);
 }
 
 // Operations dealing with loading and storing environment pieces
@@ -759,10 +799,14 @@ Ref OpDispatchBuilder::ReconstructFSW_Helper(Ref T) {
 // Store Status Word
 // There's no load Status Word instruction but you can load it through frstor
 // or fldenv.
-void OpDispatchBuilder::X87FNSTSW(OpcodeArgs) {
+void OpDispatchBuilder::X87FNSTSW(OpcodeArgs, bool DestRAX) {
   Ref TopValue = _SyncStackToSlow();
   Ref StatusWord = ReconstructFSW_Helper(TopValue);
-  StoreResultGPR(Op, StatusWord);
+  if (DestRAX) {
+    StoreGPRRegister(X86State::REG_RAX, StatusWord, OpSize::i16Bit);
+  } else {
+    StoreResultGPR(Op, StatusWord);
+  }
 }
 
 void OpDispatchBuilder::FNCLEX(OpcodeArgs) {
@@ -796,15 +840,20 @@ void OpDispatchBuilder::FNINIT(OpcodeArgs) {
   SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(Zero);
   SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(Zero);
   SetRFLAG<FEXCore::X86State::X87FLAG_IE_LOC>(Zero);
+
+  // fninit resets the FIP.
+  _StoreContextGPR(OpSize::i64Bit, _Constant(0), offsetof(FEXCore::Core::CPUState, FIP));
 }
 
 void OpDispatchBuilder::X87FFREE(OpcodeArgs) {
   _InvalidateStack(Op->OP & 7);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87EMMS(OpcodeArgs) {
   // Tags all get set to 0b11
   _InvalidateStack(0xff);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87FCMOV(OpcodeArgs) {
@@ -843,29 +892,112 @@ void OpDispatchBuilder::X87FCMOV(OpcodeArgs) {
 
   Ref VecCond = _VDupFromGPR(OpSize::i128Bit, OpSize::i64Bit, SelectCC0All1(CC));
   _F80VBSLStack(OpSize::i128Bit, VecCond, Op->OP & 7, 0);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87FXAM(OpcodeArgs) {
   auto a = _ReadStackValue(0);
-  Ref Result =
-    ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
+  Ref Value = ReducedPrecisionMode ? _VExtractToGPR(OpSize::i64Bit, OpSize::i64Bit, a, 0) : _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 1);
 
-  // Extract the sign bit
-  Result = ReducedPrecisionMode ? _Bfe(OpSize::i64Bit, 1, 63, Result) : _Bfe(OpSize::i64Bit, 1, 15, Result);
+  // Extract the sign bit, which goes in C1
+  Ref Result = ReducedPrecisionMode ? _Bfe(OpSize::i64Bit, 1, 63, Value) : _Bfe(OpSize::i64Bit, 1, 15, Value);
   SetRFLAG<FEXCore::X86State::X87FLAG_C1_LOC>(Result);
 
-  // Claim this is a normal number
-  // We don't support anything else
-  auto TopValid = _StackValidTag(0);
+  auto NotEmpty = _StackValidTag(0);
+  Ref IsEmpty = _Xor(OpSize::i64Bit, NotEmpty, Constant(1));
+  Ref IsNaN {};
+  Ref IsDenormal {};
+  Ref IsInf {};
+  Ref IsZero {};
+  Ref IsUnsupported {};
+  Ref NoSignBit {};
 
-  // In the case of top being invalid then C3:C2:C0 is 0b101
-  auto C3 = Select01(OpSize::i32Bit, CondClass::NEQ, TopValid, Constant(1));
+  // TODO: The codegen for this is not optimal, and can probably be improved
+  // if FXAM ends up on the hot path for some workload.
 
-  auto C2 = TopValid;
-  auto C0 = C3; // Mirror C3 until something other than zero is supported
+  if (ReducedPrecisionMode) {
+    constexpr uint64_t ExponentMask = 0x7FF0'0000'0000'0000ULL;
+    NoSignBit = _Bfe(OpSize::i64Bit, 63, 0, Value);
+    IsInf = Select01(OpSize::i64Bit, CondClass::EQ, NoSignBit, Constant(ExponentMask));
+    IsNaN = Select01(OpSize::i64Bit, CondClass::UGT, NoSignBit, Constant(ExponentMask));
+
+    IsZero = Select01(OpSize::i64Bit, CondClass::EQ, NoSignBit, Constant(0));
+    // 64 bit floats can't represent an x87 denormal, nor any of the
+    // unsupported encodings.
+    IsDenormal = Constant(0);
+    IsUnsupported = Constant(0);
+  } else {
+    Ref Mantissa = _VExtractToGPR(OpSize::i128Bit, OpSize::i64Bit, a, 0);
+
+    // "J" is the name given to the msb of the mantissa in the SDM.
+    Ref JBit = _Bfe(OpSize::i64Bit, 1, 63, Mantissa);
+    Ref Exponent = _Bfe(OpSize::i64Bit, 15, 0, Value);
+    Ref IsExponentZero = Select01(OpSize::i64Bit, CondClass::EQ, Exponent, Constant(0));
+    Ref IsExponentMax = Select01(OpSize::i64Bit, CondClass::EQ, Exponent, Constant(0x7FFF));
+
+    // Inf is when mantissa only has the J bit set, exponent is all 1's.
+    Ref IsOnlyJBit = Select01(OpSize::i64Bit, CondClass::EQ, Mantissa, Constant(1ULL << 63));
+    IsInf = _And(OpSize::i64Bit, IsExponentMax, IsOnlyJBit);
+
+    // NaN is when the low 63 bits of the mantissa are non-zero
+    // and exponent is max, and the J bit is set.
+    Ref Fraction = _Bfe(OpSize::i64Bit, 63, 0, Mantissa);
+    Ref FractionNonZero = Select01(OpSize::i64Bit, CondClass::NEQ, Fraction, Constant(0));
+    Ref IsExponentMaxWithJBit = _And(OpSize::i64Bit, IsExponentMax, JBit);
+    IsNaN = _And(OpSize::i64Bit, IsExponentMaxWithJBit, FractionNonZero);
+
+    // Zero and Denormal are basically the same as the 64-bit case.
+    Ref MantissaNonZero = Select01(OpSize::i64Bit, CondClass::NEQ, Mantissa, Constant(0));
+    Ref MantissaZero = _Xor(OpSize::i64Bit, MantissaNonZero, Constant(1));
+    IsZero = _And(OpSize::i64Bit, IsExponentZero, MantissaZero);
+    IsDenormal = _And(OpSize::i64Bit, IsExponentZero, MantissaNonZero);
+
+    // This is where things are weird. If the J bit is not set
+    // and the exponent is non-zero, then this is an "unsupported"
+    // encoding, which I believe is left in for legacy reasons.
+    Ref IsSupported = _Or(OpSize::i64Bit, IsExponentZero, JBit);
+    IsUnsupported = _Xor(OpSize::i64Bit, IsSupported, Constant(1));
+  }
+
+  // NormalFiniteNumber = !Zero && !Denormal && !Inf && !NaN && !Empty && !Unsupported
+  Ref temp1 = _Or(OpSize::i64Bit, IsZero, IsDenormal);
+  Ref temp2 = _Or(OpSize::i64Bit, IsInf, IsNaN);
+  Ref temp3 = _Or(OpSize::i64Bit, IsUnsupported, IsEmpty);
+  temp1 = _Or(OpSize::i64Bit, temp1, temp2);
+  temp2 = _Or(OpSize::i64Bit, temp1, temp3);
+  Ref NormalFiniteNumber = _Xor(OpSize::i64Bit, temp2, Constant(1));
+
+  // Set C3, C2, C0 based on the class of the FP value
+  // Table is from "FXAM" page in the SDM.
+  // +----------------------+----+----+----+
+  // | Class                | C3 | C2 | C0 |
+  // +----------------------+----+----+----+
+  // | Unsupported          | 0  | 0  | 0  |
+  // | NaN                  | 0  | 0  | 1  |
+  // | Normal finite number | 0  | 1  | 0  |
+  // | Infinity             | 0  | 1  | 1  |
+  // | Zero                 | 1  | 0  | 0  |
+  // | Empty                | 1  | 0  | 1  |
+  // | Denormal number      | 1  | 1  | 0  |
+  // +----------------------+----+----+----+
+
+  // C0 = IsNaN || IsInf || IsEmpty
+  Ref C0 = _Or(OpSize::i64Bit, IsNaN, IsInf);
+  C0 = _Or(OpSize::i64Bit, C0, IsEmpty);
+
+  // C2 = (IsInf || Denormal || NormalFiniteNumber) && !IsEmpty
+  Ref C2 = _Or(OpSize::i64Bit, IsInf, IsDenormal);
+  C2 = _Or(OpSize::i64Bit, C2, NormalFiniteNumber);
+  C2 = _And(OpSize::i64Bit, C2, NotEmpty);
+
+  // C3 = Zero || IsEmpty || Denormal
+  Ref C3 = _Or(OpSize::i64Bit, IsZero, IsEmpty);
+  C3 = _Or(OpSize::i64Bit, C3, IsDenormal);
+
   SetRFLAG<FEXCore::X86State::X87FLAG_C0_LOC>(C0);
   SetRFLAG<FEXCore::X86State::X87FLAG_C2_LOC>(C2);
   SetRFLAG<FEXCore::X86State::X87FLAG_C3_LOC>(C3);
+  StoreX87FIP(Op);
 }
 
 void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
@@ -876,6 +1008,11 @@ void OpDispatchBuilder::X87FXTRACT(OpcodeArgs) {
   auto Sig = _F80XTRACT_SIG(Top);
   _PushStack(Exp, Invalid(), OpSize::iInvalid);
   _PushStack(Sig, Invalid(), OpSize::iInvalid);
+  StoreX87FIP(Op);
+}
+
+void OpDispatchBuilder::X87NOP(OpcodeArgs) {
+  StoreX87FIP(Op);
 }
 
 } // namespace FEXCore::IR

@@ -312,10 +312,16 @@ namespace AVX128 {
     {OPD(2, 0b01, 0x46), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VariableShiftImpl, IROps::OP_VSSHR>}, // VPSRAVD
     {OPD(2, 0b01, 0x47), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VariableShiftImpl, IROps::OP_VUSHL>}, // VPSLLV
 
+    {OPD(2, 0b01, 0x50), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VPDPBUSD, false>},
+    {OPD(2, 0b01, 0x51), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VPDPBUSD, true>},
+    {OPD(2, 0b01, 0x52), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VPDPWSSD, false>},
+    {OPD(2, 0b01, 0x53), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VPDPWSSD, true>},
+
     {OPD(2, 0b01, 0x58), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VBROADCAST, OpSize::i32Bit>},
     {OPD(2, 0b01, 0x59), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VBROADCAST, OpSize::i64Bit>},
     {OPD(2, 0b01, 0x5A), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VBROADCAST, OpSize::i128Bit>},
 
+    {OPD(2, 0b10, 0x72), 1, &OpDispatchBuilder::AVX128_VCVTNEPS2BF16},
     {OPD(2, 0b01, 0x78), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VBROADCAST, OpSize::i8Bit>},
     {OPD(2, 0b01, 0x79), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VBROADCAST, OpSize::i16Bit>},
 
@@ -359,6 +365,13 @@ namespace AVX128 {
 
     {OPD(2, 0b01, 0xA6), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VFMAddSubImpl, true, 2, 1, 3>},  // VFMADDSUB
     {OPD(2, 0b01, 0xA7), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VFMAddSubImpl, false, 2, 1, 3>}, // VFMSUBADD
+
+    {OPD(2, 0b00, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVX128_VCVTNEEBF162PS, false>},
+    {OPD(2, 0b01, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVX128_VCVTNEEBF162PS, true>},
+    {OPD(2, 0b10, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVX128_VCVTNEEBF162PS, true>},
+    {OPD(2, 0b11, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVX128_VCVTNEEBF162PS, false>},
+    {OPD(2, 0b01, 0xB1), 1, &IR::OpDispatchBuilder::AVX128_VBCSTNEBF162PS},
+    {OPD(2, 0b10, 0xB1), 1, &IR::OpDispatchBuilder::AVX128_VBCSTNEBF162PS},
 
     {OPD(2, 0b01, 0xB6), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VFMAddSubImpl, true, 2, 3, 1>},  // VFMADDSUB
     {OPD(2, 0b01, 0xB7), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AVX128_VFMAddSubImpl, false, 2, 3, 1>}, // VFMSUBADD
@@ -757,10 +770,16 @@ namespace AVX256 {
     {OPD(2, 0b01, 0x46), 1, &OpDispatchBuilder::VPSRAVDOp},
     {OPD(2, 0b01, 0x47), 1, &OpDispatchBuilder::VPSLLVOp},
 
+    {OPD(2, 0b01, 0x50), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPDPBUSDOp, false>},
+    {OPD(2, 0b01, 0x51), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPDPBUSDOp, true>},
+    {OPD(2, 0b01, 0x52), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPDPWSSDOp, false>},
+    {OPD(2, 0b01, 0x53), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPDPWSSDOp, true>},
+
     {OPD(2, 0b01, 0x58), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VBROADCASTOp, OpSize::i32Bit>},
     {OPD(2, 0b01, 0x59), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VBROADCASTOp, OpSize::i64Bit>},
     {OPD(2, 0b01, 0x5A), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VBROADCASTOp, OpSize::i128Bit>},
 
+    {OPD(2, 0b10, 0x72), 1, &OpDispatchBuilder::AVXVCVTNEPS2BF16},
     {OPD(2, 0b01, 0x78), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VBROADCASTOp, OpSize::i8Bit>},
     {OPD(2, 0b01, 0x79), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VBROADCASTOp, OpSize::i16Bit>},
 
@@ -805,10 +824,17 @@ namespace AVX256 {
     {OPD(2, 0b01, 0xA6), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VFMAddSubImpl, true, 2, 1, 3>},  // VFMADDSUB
     {OPD(2, 0b01, 0xA7), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VFMAddSubImpl, false, 2, 1, 3>}, // VFMSUBADD
 
+    {OPD(2, 0b00, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVXVCVTNEEBF162PS, false>},
+    {OPD(2, 0b01, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVXVCVTNEEBF162PS, true>},
+    {OPD(2, 0b10, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVXVCVTNEEBF162PS, true>},
+    {OPD(2, 0b11, 0xB0), 1, &OpDispatchBuilder::Bind<&IR::OpDispatchBuilder::AVXVCVTNEEBF162PS, false>},
+    {OPD(2, 0b01, 0xB1), 1, &IR::OpDispatchBuilder::AVXVBCSTNEBF162PS},
+    {OPD(2, 0b10, 0xB1), 1, &IR::OpDispatchBuilder::AVXVBCSTNEBF162PS},
+
     {OPD(2, 0b01, 0xB6), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VFMAddSubImpl, true, 2, 3, 1>},  // VFMADDSUB
     {OPD(2, 0b01, 0xB7), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VFMAddSubImpl, false, 2, 3, 1>}, // VFMSUBADD
 
-    {OPD(2, 0b01, 0xDB), 1, &OpDispatchBuilder::AESImcOp},
+    {OPD(2, 0b01, 0xDB), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AESImcOp, true>},
     {OPD(2, 0b01, 0xDC), 1, &OpDispatchBuilder::VAESEncOp},
     {OPD(2, 0b01, 0xDD), 1, &OpDispatchBuilder::VAESEncLastOp},
     {OPD(2, 0b01, 0xDE), 1, &OpDispatchBuilder::VAESDecOp},
@@ -860,7 +886,7 @@ namespace AVX256 {
     {OPD(3, 0b01, 0x62), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPCMPISTRMOp, true>},
     {OPD(3, 0b01, 0x63), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::VPCMPISTRIOp, true>},
 
-    {OPD(3, 0b01, 0xDF), 1, &OpDispatchBuilder::AESKeyGenAssist},
+    {OPD(3, 0b01, 0xDF), 1, &OpDispatchBuilder::Bind<&OpDispatchBuilder::AESKeyGenAssist, true>},
   };
 #undef OPD
 
@@ -1207,10 +1233,16 @@ auto BaseTableLambda = [](const auto RuntimeTable) consteval {
     {OPD(2, 0b01, 0x46), 1, X86InstInfo{"VPSRAVD", TYPE_INST, GenFlagsSizes(SIZE_128BIT, SIZE_32BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0x47), 1, X86InstInfo{"VPSLLV", TYPE_INST, GenFlagsSizes(SIZE_128BIT, SIZE_32BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_XMM_FLAGS, 0}},
 
+    {OPD(2, 0b01, 0x50), 1, X86InstInfo{"VPDPBUSD", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b01, 0x51), 1, X86InstInfo{"VPDPBUSDS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b01, 0x52), 1, X86InstInfo{"VPDPWSSD", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b01, 0x53), 1, X86InstInfo{"VPDPWSSDS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
+
     {OPD(2, 0b01, 0x58), 1, X86InstInfo{"VPBROADCASTD", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0x59), 1, X86InstInfo{"VPBROADCASTQ", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0x5A), 1, X86InstInfo{"VBROADCASTI128", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_L_1 | FLAGS_SF_MOD_MEM_ONLY | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
 
+    {OPD(2, 0b10, 0x72), 1, X86InstInfo{"VCVTNEPS2BF16", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0x78), 1, X86InstInfo{"VPBROADCASTB", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0x79), 1, X86InstInfo{"VPBROADCASTW", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_REX_W_0 | FLAGS_XMM_FLAGS, 0}},
 
@@ -1254,6 +1286,13 @@ auto BaseTableLambda = [](const auto RuntimeTable) consteval {
 
     {OPD(2, 0b01, 0xA6), 1, X86InstInfo{"VFMADDSUB213", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0xA7), 1, X86InstInfo{"VFMSUBADD213", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_XMM_FLAGS, 0}},
+
+    {OPD(2, 0b00, 0xB0), 1, X86InstInfo{"VCVTNEOPH2PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b01, 0xB0), 1, X86InstInfo{"VCVTNEEPH2PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b10, 0xB0), 1, X86InstInfo{"VCVTNEEBF162PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b11, 0xB0), 1, X86InstInfo{"VCVTNEOBF162PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b01, 0xB1), 1, X86InstInfo{"VBCSTNESH2PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
+    {OPD(2, 0b10, 0xB1), 1, X86InstInfo{"VBCSTNEBF162PS", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_XMM_FLAGS, 0}},
 
     {OPD(2, 0b01, 0xB6), 1, X86InstInfo{"VFMADDSUB231", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_XMM_FLAGS, 0}},
     {OPD(2, 0b01, 0xB7), 1, X86InstInfo{"VFMSUBADD231", TYPE_INST, GenFlagsSameSize(SIZE_128BIT) | FLAGS_MODRM | FLAGS_VEX_1ST_SRC | FLAGS_XMM_FLAGS, 0}},

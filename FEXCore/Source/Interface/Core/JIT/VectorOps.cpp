@@ -930,6 +930,9 @@ DEF_OP(VectorImm) {
 
   const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
   LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+  if (Op->Do64BitExpansion) {
+    LOGMAN_THROW_A_FMT(!Is256Bit, "64-bit expansion unsupported on 256-bit operations.");
+  }
   const auto ElementSize = Op->Header.ElementSize;
   const auto SubRegSize = ConvertSubRegSize8(IROp);
 
@@ -945,12 +948,22 @@ DEF_OP(VectorImm) {
       dup_imm(SubRegSize, Dst.Z(), static_cast<int8_t>(Op->Immediate));
     }
   } else {
-    if (ElementSize == IR::OpSize::i64Bit) {
+    if (!Op->Do64BitExpansion && ElementSize == IR::OpSize::i64Bit) {
       // movi with 64bit element size doesn't do what we want here
       LoadConstant(ARMEmitter::Size::i64Bit, TMP1, static_cast<uint64_t>(Op->Immediate) << Op->ShiftAmount);
       dup(SubRegSize, Dst.Q(), TMP1.R());
     } else {
-      movi(SubRegSize, Dst.Q(), Op->Immediate, Op->ShiftAmount);
+      uint64_t Imm = Op->Immediate;
+      if (Op->Do64BitExpansion) {
+        // Need to manually expand the immediate for this case.
+        Imm = 0;
+        for (size_t i = 0; i < 8; ++i) {
+          if ((Op->Immediate >> i) & 1) {
+            Imm |= (0xFFULL << (i * 8));
+          }
+        }
+      }
+      movi(SubRegSize, Dst.Q(), Imm, Op->ShiftAmount);
     }
   }
 }
@@ -1112,8 +1125,10 @@ DEF_OP(VAddP) {
     // pairwise addition, the SVE version actually interleaves the
     // results of the pairwise addition (gross!), so we need to undo that.
     addp(SubRegSize, LHS.Z(), Pred, LHS.Z(), VectorUpper.Z());
-    uzp1(SubRegSize, Dst.Z(), LHS.Z(), LHS.Z());
+
+    // Extract the upper half first, since Dst may alias the LHS.
     uzp2(SubRegSize, VTMP2.Z(), LHS.Z(), LHS.Z());
+    uzp1(SubRegSize, Dst.Z(), LHS.Z(), LHS.Z());
 
     // Merge upper half with lower half.
     splice<ARMEmitter::OpType::Destructive>(ARMEmitter::SubRegSize::i64Bit, Dst.Z(), PRED_TMP_16B, Dst.Z(), VTMP2.Z());
@@ -1139,9 +1154,16 @@ DEF_OP(VOrn) {
   const auto Vector2 = GetVReg(Op->Vector2);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    const auto Pred = PRED_TMP_32B.Merging();
-    not_(ARMEmitter::SubRegSize::i8Bit, VTMP1.Z(), Pred, Vector2.Z());
-    orr(Dst.Z(), Vector1.Z(), VTMP1.Z());
+    if (Dst == Vector1) {
+      bsl2n(Dst.Z(), Dst.Z(), Vector2.Z(), Dst.Z());
+    } else if (Dst == Vector2) {
+      const auto Pred = PRED_TMP_32B.Merging();
+      not_(ARMEmitter::SubRegSize::i8Bit, Dst.Z(), Pred, Dst.Z());
+      orr(Dst.Z(), Vector1.Z(), Dst.Z());
+    } else {
+      movprfx(Dst.Z(), Vector1.Z());
+      bsl2n(Dst.Z(), Dst.Z(), Vector2.Z(), Vector1.Z());
+    }
   } else if (Is128Bit) {
     orn(Dst.Q(), Vector1.Q(), Vector2.Q());
   } else {
@@ -1165,8 +1187,7 @@ DEF_OP(VFAddV) {
   if (HostSupportsSVE256 && Is256Bit) {
     const auto Pred = PRED_TMP_32B.Merging();
     faddv(SubRegSize.Vector, Dst, Pred, Vector.Z());
-  }
-  if (HostSupportsSVE128) {
+  } else if (HostSupportsSVE128) {
     const auto Pred = PRED_TMP_16B.Merging();
     faddv(SubRegSize.Vector, Dst, Pred, Vector.Z());
   } else {
@@ -1193,20 +1214,16 @@ DEF_OP(VAddV) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    // SVE doesn't have an equivalent ADDV instruction, so we make do
-    // by performing two Adv. SIMD ADDV operations on the high and low
-    // 128-bit lanes and then sum them up.
-
-    const auto Mask = PRED_TMP_32B.Zeroing();
-    const auto CompactPred = ARMEmitter::PReg::p0;
-
-    // Select all our upper elements to run ADDV over them.
-    not_(CompactPred, Mask, PRED_TMP_16B);
-    compact(ARMEmitter::SubRegSize::i64Bit, VTMP1.Z(), CompactPred, Vector.Z());
-
-    addv(SubRegSize.Vector, VTMP2.Q(), Vector.Q());
-    addv(SubRegSize.Vector, VTMP1.Q(), VTMP1.Q());
-    add(SubRegSize.Vector, Dst.Q(), VTMP1.Q(), VTMP2.Q());
+    if (ElementSize == IR::OpSize::i64Bit) {
+      const auto Mask = PRED_TMP_32B.Zeroing();
+      uaddv(SubRegSize.Vector, Dst.D(), Mask, Vector.Z());
+    } else {
+      const auto Mask = ARMEmitter::PReg::p0;
+      uaddv(SubRegSize.Vector, VTMP1.D(), Mask, Vector.Z());
+      mov_imm(ARMEmitter::SubRegSize::i64Bit, Dst.Z(), 0);
+      ptrue(SubRegSize.Vector, Mask, ARMEmitter::PredicatePattern::SVE_VL1);
+      mov(SubRegSize.Vector, Dst.Z(), Mask.Merging(), VTMP1.Z());
+    }
   } else {
     if (ElementSize == IR::OpSize::i64Bit) {
       addp(SubRegSize.Scalar, Dst, Vector);
@@ -1295,6 +1312,7 @@ DEF_OP(VFAddP) {
   const auto Op = IROp->C<IR::IROp_VFAddP>();
   const auto OpSize = IROp->Size;
 
+  const auto IsScalar = OpSize == IR::OpSize::i64Bit;
   const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
   LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
 
@@ -1325,6 +1343,8 @@ DEF_OP(VFAddP) {
 
     // Merge upper half with lower half.
     splice<ARMEmitter::OpType::Destructive>(ARMEmitter::SubRegSize::i64Bit, Dst.Z(), PRED_TMP_16B, Dst.Z(), VTMP2.Z());
+  } else if (IsScalar) {
+    faddp(SubRegSize, Dst.D(), VectorLower.D(), VectorUpper.D());
   } else {
     faddp(SubRegSize, Dst.Q(), VectorLower.Q(), VectorUpper.Q());
   }
@@ -2162,6 +2182,46 @@ DEF_OP(VCMPGT) {
   }
 }
 
+DEF_OP(VUCMPGT) {
+  const auto Op = IROp->C<IR::IROp_VUCMPGT>();
+  const auto OpSize = IROp->Size;
+
+  const auto ElementSize = Op->Header.ElementSize;
+  const auto SubRegSize = ConvertSubRegSizePair16(IROp);
+  const auto IsScalar = ElementSize == OpSize;
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Vector1 = GetVReg(Op->Vector1);
+  const auto Vector2 = GetVReg(Op->Vector2);
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    const auto Mask = PRED_TMP_32B.Zeroing();
+    const auto ComparePred = ARMEmitter::PReg::p0;
+
+    // FIXME: We should rework this op to avoid the NZCV spill/fill dance.
+    mrs(TMP1, ARMEmitter::SystemRegister::NZCV);
+
+    // General idea is to compare for unsigned greater-than, bitwise NOT
+    // the valid values, then ORR the NOTed values with the original
+    // values to form entries that are all 1s.
+    cmphi(SubRegSize.Vector, ComparePred, Mask, Vector1.Z(), Vector2.Z());
+    not_(SubRegSize.Vector, VTMP1.Z(), ComparePred.Merging(), Vector1.Z());
+    movprfx(SubRegSize.Vector, Dst.Z(), ComparePred.Zeroing(), Vector1.Z());
+    orr(SubRegSize.Vector, Dst.Z(), ComparePred.Merging(), Dst.Z(), VTMP1.Z());
+
+    // Restore NZCV
+    msr(ARMEmitter::SystemRegister::NZCV, TMP1);
+  } else {
+    if (IsScalar) {
+      cmhi(SubRegSize.Scalar, Dst, Vector1, Vector2);
+    } else {
+      cmhi(SubRegSize.Vector, Dst.Q(), Vector1.Q(), Vector2.Q());
+    }
+  }
+}
+
 DEF_OP(VCMPGTZ) {
   const auto Op = IROp->C<IR::IROp_VCMPGTZ>();
   const auto OpSize = IROp->Size;
@@ -2785,17 +2845,17 @@ DEF_OP(VUShrSWide) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    const auto Mask = PRED_TMP_32B.Merging();
-
     dup(ARMEmitter::SubRegSize::i64Bit, VTMP1.Z(), ShiftScalar.Z(), 0);
-    if (Dst != Vector) {
-      // NOTE: SVE LSR is a destructive operation.
-      movprfx(Dst.Z(), Vector.Z());
-    }
     if (ElementSize == IR::OpSize::i64Bit) {
+      const auto Mask = PRED_TMP_32B.Merging();
+
+      if (Dst != Vector) {
+        // NOTE: SVE LSR is a destructive operation.
+        movprfx(Dst.Z(), Vector.Z());
+      }
       lsr(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
     } else {
-      lsr_wide(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
+      lsr_wide(SubRegSize, Dst.Z(), Vector.Z(), VTMP1.Z());
     }
   } else if (HostSupportsSVE128) {
     const auto Mask = PRED_TMP_16B.Merging();
@@ -2851,17 +2911,17 @@ DEF_OP(VSShrSWide) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    const auto Mask = PRED_TMP_32B.Merging();
-
     dup(ARMEmitter::SubRegSize::i64Bit, VTMP1.Z(), ShiftScalar.Z(), 0);
-    if (Dst != Vector) {
-      // NOTE: SVE LSR is a destructive operation.
-      movprfx(Dst.Z(), Vector.Z());
-    }
     if (ElementSize == IR::OpSize::i64Bit) {
+      const auto Mask = PRED_TMP_32B.Merging();
+
+      if (Dst != Vector) {
+        // NOTE: SVE LSR is a destructive operation.
+        movprfx(Dst.Z(), Vector.Z());
+      }
       asr(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
     } else {
-      asr_wide(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
+      asr_wide(SubRegSize, Dst.Z(), Vector.Z(), VTMP1.Z());
     }
   } else if (HostSupportsSVE128) {
     const auto Mask = PRED_TMP_16B.Merging();
@@ -2917,17 +2977,17 @@ DEF_OP(VUShlSWide) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    const auto Mask = PRED_TMP_32B.Merging();
-
     dup(ARMEmitter::SubRegSize::i64Bit, VTMP1.Z(), ShiftScalar.Z(), 0);
-    if (Dst != Vector) {
-      // NOTE: SVE LSR is a destructive operation.
-      movprfx(Dst.Z(), Vector.Z());
-    }
     if (ElementSize == IR::OpSize::i64Bit) {
+      const auto Mask = PRED_TMP_32B.Merging();
+
+      if (Dst != Vector) {
+        // NOTE: SVE LSR is a destructive operation.
+        movprfx(Dst.Z(), Vector.Z());
+      }
       lsl(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
     } else {
-      lsl_wide(SubRegSize, Dst.Z(), Mask, Dst.Z(), VTMP1.Z());
+      lsl_wide(SubRegSize, Dst.Z(), Vector.Z(), VTMP1.Z());
     }
   } else if (HostSupportsSVE128) {
     const auto Mask = PRED_TMP_16B.Merging();
@@ -3175,19 +3235,12 @@ DEF_OP(VUShrI) {
     movi(ARMEmitter::SubRegSize::i64Bit, Dst.Q(), 0);
   } else {
     if (HostSupportsSVE256 && Is256Bit) {
-      const auto Mask = PRED_TMP_32B.Merging();
-
       if (BitShift == 0) {
         if (Dst != Vector) {
           mov(Dst.Z(), Vector.Z());
         }
       } else {
-        // SVE LSR is destructive, so lets set up the destination if
-        // Vector doesn't already alias it.
-        if (Dst != Vector) {
-          movprfx(Dst.Z(), Vector.Z());
-        }
-        lsr(SubRegSize, Dst.Z(), Mask, Dst.Z(), BitShift);
+        lsr(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
       }
     } else {
       if (BitShift == 0) {
@@ -3196,48 +3249,6 @@ DEF_OP(VUShrI) {
         }
       } else {
         ushr(SubRegSize, Dst.Q(), Vector.Q(), BitShift);
-      }
-    }
-  }
-}
-
-DEF_OP(VUShraI) {
-  const auto Op = IROp->C<IR::IROp_VUShraI>();
-  const auto OpSize = IROp->Size;
-
-  const auto BitShift = Op->BitShift;
-  const auto SubRegSize = ConvertSubRegSize8(IROp);
-  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
-  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
-
-  const auto Dst = GetVReg(Node);
-  const auto DestVector = GetVReg(Op->DestVector);
-  const auto Vector = GetVReg(Op->Vector);
-
-  if (HostSupportsSVE256 && Is256Bit) {
-    if (Dst == DestVector) {
-      usra(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
-    } else {
-      if (Dst != Vector) {
-        mov(Dst.Z(), DestVector.Z());
-        usra(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
-      } else {
-        mov(VTMP1.Z(), DestVector.Z());
-        usra(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
-        mov(Dst.Z(), VTMP1.Z());
-      }
-    }
-  } else {
-    if (Dst == DestVector) {
-      usra(SubRegSize, Dst.Q(), Vector.Q(), BitShift);
-    } else {
-      if (Dst != Vector) {
-        mov(Dst.Q(), DestVector.Q());
-        usra(SubRegSize, Dst.Q(), Vector.Q(), BitShift);
-      } else {
-        mov(VTMP1.Q(), DestVector.Q());
-        usra(SubRegSize, VTMP1.Q(), Vector.Q(), BitShift);
-        mov(Dst.Q(), VTMP1.Q());
       }
     }
   }
@@ -3258,19 +3269,12 @@ DEF_OP(VSShrI) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    const auto Mask = PRED_TMP_32B.Merging();
-
     if (Shift == 0) {
       if (Dst != Vector) {
         mov(Dst.Z(), Vector.Z());
       }
     } else {
-      // SVE ASR is destructive, so lets set up the destination if
-      // Vector doesn't already alias it.
-      if (Dst != Vector) {
-        movprfx(Dst.Z(), Vector.Z());
-      }
-      asr(SubRegSize, Dst.Z(), Mask, Dst.Z(), Shift);
+      asr(SubRegSize, Dst.Z(), Vector.Z(), Shift);
     }
   } else {
     if (Shift == 0) {
@@ -3300,19 +3304,12 @@ DEF_OP(VShlI) {
     movi(ARMEmitter::SubRegSize::i64Bit, Dst.Q(), 0);
   } else {
     if (HostSupportsSVE256 && Is256Bit) {
-      const auto Mask = PRED_TMP_32B.Merging();
-
       if (BitShift == 0) {
         if (Dst != Vector) {
           mov(Dst.Z(), Vector.Z());
         }
       } else {
-        // SVE LSL is destructive, so lets set up the destination if
-        // Vector doesn't already alias it.
-        if (Dst != Vector) {
-          movprfx(Dst.Z(), Vector.Z());
-        }
-        lsl(SubRegSize, Dst.Z(), Mask, Dst.Z(), BitShift);
+        lsl(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
       }
     } else {
       if (BitShift == 0) {
@@ -3339,8 +3336,13 @@ DEF_OP(VUShrNI) {
   const auto Vector = GetVReg(Op->Vector);
 
   if (HostSupportsSVE256 && Is256Bit) {
-    shrnb(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
-    uzp1(SubRegSize, Dst.Z(), Dst.Z(), Dst.Z());
+    if (BitShift == 0) {
+      mov_imm(ARMEmitter::SubRegSize::i64Bit, VTMP1.Z(), 0);
+      uzp1(SubRegSize, Dst.Z(), Dst.Z(), VTMP1.Z());
+    } else {
+      shrnb(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
+      uzp1(SubRegSize, Dst.Z(), Dst.Z(), Dst.Z());
+    }
   } else {
     if (BitShift == 0) {
       xtn(SubRegSize, Dst.D(), Vector.D());
@@ -3385,6 +3387,55 @@ DEF_OP(VUShrNI2) {
     if (Dst != VectorLower) {
       mov(Dst.Q(), Lower.Q());
     }
+  }
+}
+
+DEF_OP(VRSHRN) {
+  const auto Op = IROp->C<IR::IROp_VRSHRN>();
+  const auto OpSize = IROp->Size;
+
+  const auto BitShift = Op->BitShift;
+  const auto SubRegSize = ConvertSubRegSize4(IROp);
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Vector = GetVReg(Op->Vector);
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    rshrnb(SubRegSize, Dst.Z(), Vector.Z(), BitShift);
+    uzp1(SubRegSize, Dst.Z(), Dst.Z(), Dst.Z());
+  } else {
+    rshrn(SubRegSize, Dst.D(), Vector.D(), BitShift);
+  }
+}
+
+DEF_OP(VRSHRNPair) {
+  const auto Op = IROp->C<IR::IROp_VRSHRNPair>();
+  const auto OpSize = IROp->Size;
+
+  const auto BitShift = Op->BitShift;
+  const auto SubRegSize = ConvertSubRegSize4(IROp);
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto VectorLower = GetVReg(Op->VectorLower);
+  auto VectorUpper = GetVReg(Op->VectorUpper);
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    rshrnb(SubRegSize, VTMP1.Z(), VectorLower.Z(), BitShift);
+    rshrnb(SubRegSize, VTMP2.Z(), VectorUpper.Z(), BitShift);
+    uzp1(SubRegSize, Dst.Z(), VTMP1.Z(), VTMP2.Z());
+  } else {
+    if (Dst == VectorUpper) {
+      // RSHRN writes the lower half and would destroy the upper input.
+      mov(VTMP1.Q(), VectorUpper.Q());
+      VectorUpper = VTMP1;
+    }
+
+    rshrn(SubRegSize, Dst.D(), VectorLower.D(), BitShift);
+    rshrn2(SubRegSize, Dst.Q(), VectorUpper.Q(), BitShift);
   }
 }
 
@@ -3593,9 +3644,13 @@ DEF_OP(VSQXTN2) {
       mov(Dst.Q(), VectorLower.Q());
       ins(ARMEmitter::SubRegSize::i32Bit, Dst, 1, VTMP2, 0);
     } else {
-      mov(VTMP1.Q(), VectorLower.Q());
-      sqxtn2(SubRegSize, VTMP1, VectorUpper);
-      mov(Dst.Q(), VTMP1.Q());
+      if (Dst == VectorLower) {
+        sqxtn2(SubRegSize, VectorLower, VectorUpper);
+      } else {
+        mov(VTMP1.Q(), VectorLower.Q());
+        sqxtn2(SubRegSize, VTMP1, VectorUpper);
+        mov(Dst.Q(), VTMP1.Q());
+      }
     }
   }
 }
@@ -3830,6 +3885,171 @@ DEF_OP(VMul) {
     mul(SubRegSize, Dst.Z(), Vector1.Z(), Vector2.Z());
   } else {
     mul(SubRegSize, Dst.Q(), Vector1.Q(), Vector2.Q());
+  }
+}
+
+DEF_OP(VUSDot) {
+  ///< Dest = Acc + dot(Vector1 (unsigned 8-bit), Vector2 (signed 8-bit))
+  // Matches:
+  // - SVE    - USDOT
+  // - ASIMD  - USDOT
+  const auto Op = IROp->C<IR::IROp_VUSDot>();
+  const auto OpSize = IROp->Size;
+
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Acc = GetVReg(Op->Acc);
+  const auto Vector1 = GetVReg(Op->Vector1);
+  const auto Vector2 = GetVReg(Op->Vector2);
+
+  // USDOT accumulates in to its destination register,
+  // so we need to emit a move if Acc != Dst
+  ARMEmitter::VRegister DestTmp = Dst;
+  if (Dst != Acc) {
+    if (Dst != Vector1 && Dst != Vector2) {
+      DestTmp = Dst;
+    } else {
+      DestTmp = VTMP1;
+    }
+  }
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    if (Dst != Acc) {
+      mov(DestTmp.Z(), Acc.Z());
+    }
+
+    usdot(DestTmp.Z(), Vector1.Z(), Vector2.Z());
+    if (Dst != DestTmp) {
+      mov(Dst.Z(), DestTmp.Z());
+    }
+  } else {
+    if (Dst != Acc) {
+      mov(DestTmp.Q(), Acc.Q());
+    }
+
+    usdot(DestTmp.Q(), Vector1.Q(), Vector2.Q());
+    if (Dst != DestTmp) {
+      mov(Dst.Q(), DestTmp.Q());
+    }
+  }
+}
+
+DEF_OP(VSDot) {
+  ///< Dest = Acc + dot(Vector1 (signed 8-bit), Vector2 (signed 8-bit))
+  // Matches:
+  // - SVE    - SDOT
+  // - ASIMD  - SDOT
+  const auto Op = IROp->C<IR::IROp_VSDot>();
+  const auto OpSize = IROp->Size;
+
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Acc = GetVReg(Op->Acc);
+  const auto Vector1 = GetVReg(Op->Vector1);
+  const auto Vector2 = GetVReg(Op->Vector2);
+
+  // SDOT accumulates in to its destination register,
+  // so we need to emit a move if Acc != Dst
+  ARMEmitter::VRegister DestTmp = Dst;
+  if (Dst != Acc) {
+    if (Dst != Vector1 && Dst != Vector2) {
+      DestTmp = Dst;
+    } else {
+      DestTmp = VTMP1;
+    }
+  }
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    if (Dst != Acc) {
+      mov(DestTmp.Z(), Acc.Z());
+    }
+
+    sdot(ARMEmitter::SubRegSize::i32Bit, DestTmp.Z(), Vector1.Z(), Vector2.Z());
+    if (Dst != DestTmp) {
+      mov(Dst.Z(), DestTmp.Z());
+    }
+  } else {
+    if (Dst != Acc) {
+      mov(DestTmp.Q(), Acc.Q());
+    }
+
+    sdot(ARMEmitter::SubRegSize::i32Bit, DestTmp.Q(), Vector1.Q(), Vector2.Q());
+    if (Dst != DestTmp) {
+      mov(Dst.Q(), DestTmp.Q());
+    }
+  }
+}
+
+DEF_OP(VSAddLP) {
+  const auto Op = IROp->C<IR::IROp_VSAddLP>();
+  const auto OpSize = IROp->Size;
+
+  const auto SubRegSize = ConvertSubRegSize248(IROp);
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Vector = GetVReg(Op->Vector);
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    // SVE only has the accumulating form, so accumulate in to a zeroed register.
+    // Zero a temporary instead if Dst aliases the source.
+    const auto DestTmp = Dst == Vector ? VTMP1 : Dst;
+    dup_imm(SubRegSize, DestTmp.Z(), 0);
+    sadalp(SubRegSize, DestTmp.Z(), PRED_TMP_32B.Merging(), Vector.Z());
+    if (Dst != DestTmp) {
+      mov(Dst.Z(), DestTmp.Z());
+    }
+  } else {
+    saddlp(SubRegSize, Dst.Q(), Vector.Q());
+  }
+}
+
+DEF_OP(VSAdALP) {
+  const auto Op = IROp->C<IR::IROp_VSAdALP>();
+  const auto OpSize = IROp->Size;
+
+  const auto SubRegSize = ConvertSubRegSize248(IROp);
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  LOGMAN_THROW_A_FMT(!Is256Bit || HostSupportsSVE256, "Need SVE256 support in order to use {} with 256-bit operation", __func__);
+
+  const auto Dst = GetVReg(Node);
+  const auto Acc = GetVReg(Op->Acc);
+  const auto Vector = GetVReg(Op->Vector);
+
+  // SADALP accumulates in to its destination register,
+  // so we need to emit a move if Acc != Dst
+  ARMEmitter::VRegister DestTmp = Dst;
+  if (Dst != Acc) {
+    DestTmp = Dst != Vector ? Dst : VTMP1;
+  }
+
+  if (HostSupportsSVE256 && Is256Bit) {
+    if (Dst != Acc) {
+      mov(DestTmp.Z(), Acc.Z());
+    }
+
+    sadalp(SubRegSize, DestTmp.Z(), PRED_TMP_32B.Merging(), Vector.Z());
+    if (Dst != DestTmp) {
+      mov(Dst.Z(), DestTmp.Z());
+    }
+  } else {
+    if (Dst == Vector) {
+      // ASIMD has the non-accumulating form, which is cheaper than shuffling through a temporary.
+      saddlp(SubRegSize, VTMP1.Q(), Vector.Q());
+      add(SubRegSize, Dst.Q(), Acc.Q(), VTMP1.Q());
+      return;
+    }
+
+    if (Dst != Acc) {
+      mov(Dst.Q(), Acc.Q());
+    }
+
+    sadalp(SubRegSize, Dst.Q(), Vector.Q());
   }
 }
 
@@ -4451,13 +4671,9 @@ DEF_OP(VFMLS) {
 
     if (Is128Bit) {
       fneg(SubRegSize, DestTmp.Q(), VectorAddend.Q());
-    } else {
-      fneg(SubRegSize, DestTmp.D(), VectorAddend.D());
-    }
-
-    if (Is128Bit) {
       fmla(SubRegSize, DestTmp.Q(), Vector1.Q(), Vector2.Q());
     } else {
+      fneg(SubRegSize, DestTmp.D(), VectorAddend.D());
       fmla(SubRegSize, DestTmp.D(), Vector1.D(), Vector2.D());
     }
 
@@ -4611,13 +4827,9 @@ DEF_OP(VFNMLS) {
 
     if (Is128Bit) {
       fneg(SubRegSize, DestTmp.Q(), VectorAddend.Q());
-    } else {
-      fneg(SubRegSize, DestTmp.D(), VectorAddend.D());
-    }
-
-    if (Is128Bit) {
       fmls(SubRegSize, DestTmp.Q(), Vector1.Q(), Vector2.Q());
     } else {
+      fneg(SubRegSize, DestTmp.D(), VectorAddend.D());
       fmls(SubRegSize, DestTmp.D(), Vector1.D(), Vector2.D());
     }
 
@@ -4628,6 +4840,106 @@ DEF_OP(VFNMLS) {
         mov(Dst.D(), DestTmp.D());
       }
     }
+  }
+}
+
+DEF_OP(VBlendImm) {
+  LOGMAN_THROW_A_FMT(HostSupportsSVE128 || HostSupportsSVE256, "Host must support SVE to use {}", __func__);
+
+  auto Op = IROp->C<IR::IROp_VBlendImm>();
+  const auto OpSize = IROp->Size;
+  const auto Is256Bit = OpSize == IR::OpSize::i256Bit;
+  const auto SubRegSize = ConvertSubRegSize8(IROp);
+  const auto ElementSize = IROp->ElementSize;
+  const auto Selector = Op->Selector;
+
+  const auto GoverningPredicate = Is256Bit ? PRED_TMP_32B : PRED_TMP_16B;
+
+  const auto Dst = GetVReg(Node);
+  const auto LHS = GetVReg(Op->LHS);
+  const auto RHS = GetVReg(Op->RHS);
+  const auto DstIsNonAliasing = Dst != LHS && Dst != RHS;
+
+  // Silly case where two blending sources are the same.
+  if (LHS == RHS) {
+    if (DstIsNonAliasing) {
+      mov(SubRegSize, Dst.Z(), GoverningPredicate.Merging(), LHS.Z());
+    }
+    return;
+  }
+
+  // We'll need to expand our selector to match its predicate equivalent.
+  // The lowest bit of each predicate element being set to 1 signifies
+  // that it's enabled.
+  const auto MakePredicateMask = [ElementSize, Is256Bit, OpSize](uint16_t Imm) {
+    if (ElementSize == IR::OpSize::i8Bit) {
+      // Since we use a u16 selector, we have enough bits for every byte in a
+      // 128-bit lane, so we don't need to do anything here except replicate the
+      // bits in the event of 256-bit.
+      return Is256Bit ? uint32_t(Imm) << 16 | Imm : Imm;
+    }
+
+    uint32_t Mask = 0;
+    const auto DataSize = IR::OpSizeToSize(ElementSize);
+    const auto NumElements = IR::NumElements(OpSize, ElementSize);
+    for (uint32_t i = 0; i < NumElements; i++) {
+      if (((Imm >> i) & 1) != 0) {
+        Mask |= 1U << (DataSize * i);
+      }
+    }
+    return Mask;
+  };
+
+  // Our predicate that we'll be firing our constructed bitmask into.
+  constexpr auto Predicate = ARMEmitter::PReg::p0.Merging();
+
+  // TODO: We can completely eliminate this via PMOV in SVE2.1
+  ARMEmitter::ForwardLabel AfterLabel;
+  ARMEmitter::BackwardLabel ConstantLabel;
+  (void)b(&AfterLabel);
+  (void)Bind(&ConstantLabel);
+  const auto PredicateMask = MakePredicateMask(Selector);
+  if (Dst == RHS) {
+    dc32(~PredicateMask);
+  } else {
+    dc32(PredicateMask);
+  }
+  (void)Bind(&AfterLabel);
+  (void)adr(TMP1, &ConstantLabel);
+  ldr(Predicate, TMP1);
+
+  if (Dst == LHS) {
+    mov(SubRegSize, LHS.Z(), Predicate, RHS.Z());
+  } else if (Dst == RHS) {
+    mov(SubRegSize, RHS.Z(), Predicate, LHS.Z());
+  } else {
+    mov(SubRegSize, Dst.Z(), GoverningPredicate.Merging(), LHS.Z());
+    mov(SubRegSize, Dst.Z(), Predicate, RHS.Z());
+  }
+}
+
+DEF_OP(VXar) {
+  LOGMAN_THROW_A_FMT(HostSupportsSVE128 || HostSupportsSVE256, "Host must support SVE to use {}", __func__);
+
+  auto Op = IROp->C<IR::IROp_VXar>();
+  const auto SubRegSize = ConvertSubRegSize8(IROp);
+  const auto ElementSizeBits = IR::OpSizeAsBits(IROp->ElementSize);
+
+  const auto Dst = GetVReg(Node);
+  const auto LHS = GetVReg(Op->LHS);
+  const auto RHS = GetVReg(Op->RHS);
+  const auto Rotate = Op->Rotate;
+  LOGMAN_THROW_A_FMT(Rotate >= 1 && Rotate <= ElementSizeBits, "Rotate immediate must be within [1, {}]", ElementSizeBits);
+
+  if (Dst == LHS) {
+    xar(SubRegSize, Dst.Z(), RHS.Z(), Rotate);
+  } else if (Dst == RHS) {
+    movprfx(VTMP1.Z(), LHS.Z());
+    xar(SubRegSize, VTMP1.Z(), RHS.Z(), Rotate);
+    mov(Dst.Z(), VTMP1.Z());
+  } else {
+    movprfx(Dst.Z(), LHS.Z());
+    xar(SubRegSize, Dst.Z(), RHS.Z(), Rotate);
   }
 }
 

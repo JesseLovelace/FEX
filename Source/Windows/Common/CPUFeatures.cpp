@@ -61,7 +61,7 @@ public:
   }
 };
 
-FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostFeatures::HostTypeEnum HostType) {
+FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostFeatures::HostTypeEnum HostType, uint32_t ProcessPID) {
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira: registry has nothing useful here (Hardware\... reg keys
    * aren't populated). Synthesize a minimal HostFeatures manually with
@@ -158,7 +158,12 @@ FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostF
   }
 #endif
   HostFeatures.CPUMIDRs.push_back(0u);
-  HostFeatures.HostType = HostType;
+  HostFeatures.ProcessPID = ProcessPID;
+  HostFeatures.ProcessFeatures.HostType = HostType;
+  HostFeatures.ProcessFeatures.Is64BitMode = HostType == FEXCore::HostFeatures::HostTypeEnum::Arm64ec;
+  // Madeira delivers guest faults through its own exception path; keep the
+  // pre-existing (non fault-free) synchronous fault handling.
+  HostFeatures.ProcessFeatures.SupportsFaultFreeSynchronousFaults = false;
   /* iOS-Madeira: AVX/AVX2 stay off (titles that check CPUID take their SSE
    * paths), but a game built for AVX dies on its first VEX instruction. The app
    * sets MADEIRA_FEX_AVX=1 for such a game; FEX then runs AVX through its
@@ -198,12 +203,16 @@ FEXCore::HostFeatures CPUFeatures::FetchHostFeatures(bool IsWine, FEXCore::HostF
 
   HostFeatures.SupportsCPUIndexInTPIDRRO = !IsWine;
 
-  HostFeatures.HostType = HostType;
+  HostFeatures.ProcessPID = ProcessPID;
 
-  if (HostType == FEXCore::HostFeatures::HostTypeEnum::Wow64) {
-    // AVX is unsupported for WOW64
-    HostFeatures.SupportsAVX = false;
-  }
+  // AVX is unsupported for WOW64
+  HostFeatures.SupportsAVX = HostType == FEXCore::HostFeatures::HostTypeEnum::Arm64ec;
+
+  HostFeatures.ProcessFeatures.HostType = HostType;
+  HostFeatures.ProcessFeatures.Is64BitMode = HostType == FEXCore::HostFeatures::HostTypeEnum::Arm64ec;
+  // arm64ec supports synchronous faults without a double-fault dance.
+  HostFeatures.ProcessFeatures.SupportsFaultFreeSynchronousFaults = HostType == FEXCore::HostFeatures::HostTypeEnum::Arm64ec;
+
   return HostFeatures;
 #endif
 }

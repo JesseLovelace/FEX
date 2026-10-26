@@ -2,6 +2,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <limits.h>
 
 #if defined(__linux__)
 #include <linux/futex.h> /* Definition of FUTEX_* constants */

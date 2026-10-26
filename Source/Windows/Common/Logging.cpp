@@ -84,6 +84,12 @@ static void AssertHandler(const char* Message) {
 }
 } // namespace
 
+
+namespace FEX::Windows::Logging {
+void UnimplementedLog(const char* Func) {
+  LogMan::Msg::DFmt("Unimplemented Function in: {}", Func);
+}
+} // namespace FEX::Windows::Logging
 namespace FEX::Windows::Logging {
 void Init() {
 #ifndef FEX_IOS_HOST
@@ -99,7 +105,7 @@ void Init() {
   IosLogWrite(m, __builtin_strlen(m));
 #endif
 
-  WineDbgOut = reinterpret_cast<decltype(WineDbgOut)>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "__wine_dbg_output"));
+  WineDbgOut = reinterpret_cast<decltype(WineDbgOut)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "__wine_dbg_output"));
   if (!WineDbgOut) {
     const auto Path = fextl::fmt::format("{}\\fex-{}.log", getenv("LOCALAPPDATA"), GetCurrentProcessId());
     LogFile = fopen(Path.c_str(), "a");

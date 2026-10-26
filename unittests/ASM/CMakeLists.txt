@@ -37,7 +37,10 @@ foreach(ASM_SRC ${ASM_SOURCES})
 
   add_custom_command(OUTPUT ${OUTPUT_NAME}
     DEPENDS "${TMP_FILE}"
-    COMMAND "nasm" ARGS "-i" "${CMAKE_SOURCE_DIR}/unittests/ASM/Includes/" "${TMP_FILE}" "-o" "${OUTPUT_NAME}")
+    COMMAND "nasm" ARGS
+    "-i" "${CMAKE_SOURCE_DIR}/unittests/ASM/Includes/"
+    "-i" "${CMAKE_SOURCE_DIR}/${ASM_DIR}/"
+    "${TMP_FILE}" "-o" "${OUTPUT_NAME}")
 
   add_custom_command(OUTPUT ${OUTPUT_CONFIG_NAME}
     DEPENDS "${ASM_SRC}"
@@ -87,7 +90,7 @@ foreach(ASM_SRC ${ASM_SOURCES})
     endif()
 
     add_test(NAME ${TEST_NAME}
-      COMMAND "python3" "${CMAKE_SOURCE_DIR}/Scripts/testharness_runner.py"
+      COMMAND ${PYTHON_TEST_RUNNER} "${CMAKE_SOURCE_DIR}/Scripts/testharness_runner.py"
       "${CMAKE_SOURCE_DIR}/unittests/ASM/Known_Failures"
       "${CMAKE_SOURCE_DIR}/unittests/ASM/Known_Failures_${TEST_TYPE}"
       "${CMAKE_SOURCE_DIR}/unittests/ASM/Disabled_Tests"

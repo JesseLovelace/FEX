@@ -10,11 +10,6 @@
 
 namespace FEXCore::CPU {
 
-template<typename R, typename... Args>
-static FallbackInfo GetFallbackInfo(R (*fn)(Args...), FEXCore::Core::FallbackHandlerIndex HandlerIndex) {
-  return {FABI_UNKNOWN, HandlerIndex};
-}
-
 void InterpreterOps::FillFallbackIndexPointers(Core::FallbackABIInfo* Info, uint64_t* ABIHandlers) {
   Info[Core::OPINDEX_F80CVTTO_4] = {ABIHandlers[FABI_F80_I16_F32_PTR],
                                     reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_F80CVTTO>::handle4)};
@@ -105,6 +100,7 @@ void InterpreterOps::FillFallbackIndexPointers(Core::FallbackABIInfo* Info, uint
                                   reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_F64SCALE>::handle)};
 
   // SSE4.2 string instructions
+  // NOTE: Currently unused. See VectorFallbacks.h.
   Info[Core::OPINDEX_VPCMPESTRX] = {ABIHandlers[FABI_I32_I64_I64_V128_V128_I16],
                                     reinterpret_cast<uint64_t>(&FEXCore::CPU::OpHandlers<IR::OP_VPCMPESTRX>::handle)};
   Info[Core::OPINDEX_VPCMPISTRX] = {ABIHandlers[FABI_I32_V128_V128_I16],
@@ -214,12 +210,6 @@ bool InterpreterOps::GetFallbackHandler(const IR::IROp_Header* IROp, FallbackInf
   case IR::OP_F80##OP: {                                       \
     *Info = {FABI_F80_I16_F80_F80_PTR, Core::OPINDEX_F80##OP}; \
     return true;                                               \
-  }
-
-#define COMMON_F64_OP(OP)                                                                              \
-  case IR::OP_F64##OP: {                                                                               \
-    *Info = GetFallbackInfo(&FEXCore::CPU::OpHandlers<IR::OP_F64##OP>::handle, Core::OPINDEX_F64##OP); \
-    return true;                                                                                       \
   }
 
 #define COMMON_UNARY_F64_OP(OP)                        \

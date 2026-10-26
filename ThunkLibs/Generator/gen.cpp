@@ -813,6 +813,9 @@ bool GenerateThunkLibsActionFactory::runInvocation(std::shared_ptr<clang::Compil
   clang::CompilerInstance Compiler(std::move(PCHContainerOps));
   Compiler.setInvocation(std::move(Invocation));
 #endif
+#if LLVM_VERSION_MAJOR >= 22
+  Compiler.setVirtualFileSystem(Files->getVirtualFileSystemPtr());
+#endif
   Compiler.setFileManager(Files);
 
   GenerateThunkLibsAction Action(libname, output_filenames, abi);
@@ -837,6 +840,8 @@ bool GenerateThunkLibsActionFactory::runInvocation(std::shared_ptr<clang::Compil
 
   const bool Success = Compiler.ExecuteAction(Action);
 
+#if LLVM_VERSION_MAJOR < 23
   Files->clearStatCache();
+#endif
   return Success;
 }

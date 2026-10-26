@@ -196,6 +196,8 @@ struct alignas(64) CPUState {
   uint8_t AbridgedFTW {};
 
   uint8_t _pad2[5];
+  uint64_t FIP {};
+
   // PF/AF are statically mapped as-if they were r16/r17 (which do not exist in
   // x86 otherwise). This allows a straightforward mapping for SRA.
   static constexpr uint8_t PF_AS_GREG = 16;
@@ -251,7 +253,6 @@ struct alignas(64) CPUState {
   // Follows encoding of the TI bit in segment selector encoding.
   constexpr static uint32_t SEGMENT_ARRAY_INDEX_GDT = 0;
   constexpr static uint32_t SEGMENT_ARRAY_INDEX_LDT = 1;
-  Core::CPUState::gdt_segment private_gdt[32] {};
 };
 static_assert(std::is_trivially_copyable_v<CPUState>, "Needs to be trivial");
 static_assert(std::is_standard_layout_v<CPUState>, "This needs to be standard layout");
@@ -352,12 +353,17 @@ struct JITPointers {
   uint64_t SyscallHandlerFunc {};
   uint64_t ExitFunctionLink {};
   uint64_t MonoBackpatcherWrite {};
-  uint64_t LUDIV {};
-  uint64_t LDIV {};
+  uint64_t RDRANDFallback {};
   uint64_t ThunkCallbackRet {};
 
+  /**
+   * @name Frontend handler pointers.
+   * @{ */
   // Handles returning/calling ARM64EC code from the JIT, expects the target PC in TMP3
   uint64_t ExitFunctionEC {};
+  // Handles a synchronous exception without faulting to jump in to the handler. Frontend specific.
+  uint64_t SynchronousExceptionHandler {};
+  /**  @} */
 
   FallbackABIInfo FallbackHandlerPointers[FallbackHandlerIndex::OPINDEX_MAX];
   uint64_t NamedVectorConstantPointers[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX];
@@ -374,14 +380,15 @@ struct JITPointers {
   uint64_t ExitFunctionLinker {};
   uint64_t ThreadStopHandlerSpillSRA {};
   uint64_t ThreadPauseHandlerSpillSRA {};
+  uint64_t ThreadDispatchSyscallHandler {};
+  uint64_t ThreadDispatchRemoveCodeEntry {};
   uint64_t GuestSignal_SIGILL {};
   uint64_t GuestSignal_SIGTRAP {};
   uint64_t GuestSignal_SIGSEGV {};
+  uint64_t GuestSignal_SynchronousFault {};
   uint64_t SignalReturnHandler {};
   uint64_t SignalReturnHandlerRT {};
   uint64_t L2Pointer {};
-  uint64_t LUDIVHandler {};
-  uint64_t LDIVHandler {};
   uint64_t F64SinHandler {};
   uint64_t F64CosHandler {};
   uint64_t F64TanHandler {};
@@ -431,7 +438,7 @@ struct CpuStateFrame {
 
   InternalThreadState* Thread;
 
-#ifdef ARCHITECTURE_arm64ec
+#ifdef _WIN32
   // Set by the kernel on ARM64EC whenever the JIT should cooperatively suspend running guest code.
   uint32_t SuspendDoorbell {};
 #endif

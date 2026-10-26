@@ -10,6 +10,8 @@ enum class FEXUnixLibFunctions : uint32_t {
   SetVMAName,
   GetSHMStatsVMA,
   DeleteSHMStatsFile,
+  MapFile,
+  GetPID,
   MAX,
 };
 
@@ -51,3 +53,15 @@ struct FEXUnixLib_GetSHMStatsVMA {
   uint32_t MaxSize;
 };
 static_assert(sizeof(FEXUnixLib_GetSHMStatsVMA) == 16);
+
+struct FEXUnixLib_MapFile {
+  int32_t FD;
+  uint64_t MapSize;
+  void* Result;
+};
+static_assert(sizeof(FEXUnixLib_MapFile) == 24);
+
+struct FEXUnixLib_GetPID {
+  uint32_t Result;
+};
+static_assert(sizeof(FEXUnixLib_GetPID) == 4);

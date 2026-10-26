@@ -81,12 +81,15 @@ private:
   uint64_t AbsoluteLoopTopAddressEnterECFillSRA {};
   uint64_t ThreadPauseHandlerAddress {};
   uint64_t ThreadPauseHandlerAddressSpillSRA {};
+  uint64_t ThreadDispatchSyscallHandler {};
+  uint64_t ThreadDispatchRemoveCodeEntry {};
   uint64_t ExitFunctionLinkerAddress {};
   uint64_t SignalHandlerReturnAddress {};
   uint64_t SignalHandlerReturnAddressRT {};
   uint64_t GuestSignal_SIGILL {};
   uint64_t GuestSignal_SIGTRAP {};
   uint64_t GuestSignal_SIGSEGV {};
+  uint64_t GuestSignal_SynchronousFault {};
 
   uint64_t PauseReturnInstruction {};
   std::array<uint64_t, FallbackABI::FABI_UNKNOWN> ABIPointers {};
@@ -94,10 +97,6 @@ private:
 
   uint64_t Start {};
   uint64_t End {};
-
-  // Long division helpers
-  uint64_t LUDIVHandlerAddress {};
-  uint64_t LDIVHandlerAddress {};
 
   // F64 reduced-precision shared handlers
   uint64_t F64SinHandlerAddress {};

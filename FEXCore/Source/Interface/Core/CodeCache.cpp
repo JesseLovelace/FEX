@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+#include "Utils/crc32.h"
 #include "FEXCore/Utils/LogManager.h"
 #include "FEXCore/Utils/MathUtils.h"
 #include "FEXCore/Utils/TypeDefines.h"
@@ -49,6 +50,10 @@ MappedCodeCacheFile::~MappedCodeCacheFile() {
 #ifndef _WIN32
   if (!CodeBuffer.empty()) {
     FEXCore::Allocator::munmap(CodeBuffer.data(), CodeBuffer.size_bytes());
+  }
+#elif defined(_M_ARM64EC)
+  if (!CodeBuffer.empty()) {
+    FEXCore::Allocator::VirtualFree(CodeBuffer.data(), CodeBuffer.size_bytes());
   }
 #endif
 }
@@ -107,16 +112,22 @@ fextl::map<CodeMapFileId, CodeMap::ParsedContents> CodeMap::ParseCodeMap(std::if
         break;
       }
       Ret[Info.ExternalFileId].Filename = std::move(Filename);
-    } else if (Entry.FileId == SetExecutableFileId {}.Marker.FileId && Entry.BlockOffset == SetExecutableFileId {}.Marker.BlockOffset) {
+    } else if ((Entry.FileId == SetExecutableFileId::Marker32.FileId && Entry.BlockOffset == SetExecutableFileId::Marker32.BlockOffset) ||
+               (Entry.FileId == SetExecutableFileId::Marker64.FileId && Entry.BlockOffset == SetExecutableFileId::Marker64.BlockOffset)) {
       CodeMapFileId ExecutableFileId;
       File.read(reinterpret_cast<char*>(&ExecutableFileId), sizeof(ExecutableFileId));
       if (!File) {
         break;
       }
-      Ret[ExecutableFileId].IsExecutable = true;
+      Ret[ExecutableFileId].ExecutableBitness =
+        (Entry.FileId == SetExecutableFileId::Marker32.FileId && Entry.BlockOffset == SetExecutableFileId::Marker32.BlockOffset) ? 32 : 64;
     } else {
       if (!Ret.contains(Entry.FileId)) {
-        LogMan::Msg::EFmt("Code map referenced unknown file id {:016x}", Entry.FileId);
+        if (Entry.FileId == 0xffff'ffff'ffff'ffff) {
+          ERROR_AND_DIE_FMT("Malformed code map");
+        } else {
+          LogMan::Msg::EFmt("Code map referenced unknown file id {:016x}", Entry.FileId);
+        }
       } else {
         Ret[Entry.FileId].Blocks.insert(Entry.BlockOffset);
       }
@@ -222,8 +233,8 @@ void CodeMapWriter::AppendLibraryLoad(const FEXCore::ExecutableFileInfo& FileInf
   AppendData(std::as_bytes(std::span {Data, TotalSize}));
 }
 
-void CodeMapWriter::AppendSetMainExecutable(const FEXCore::ExecutableFileInfo& FileInfo) {
-  CodeMap::SetExecutableFileId Data {.ExecutableFileId = FileInfo.FileId};
+void CodeMapWriter::AppendSetMainExecutable(const FEXCore::ExecutableFileInfo& FileInfo, bool Is64Bit) {
+  CodeMap::SetExecutableFileId Data {Is64Bit ? CodeMap::SetExecutableFileId::Marker64 : CodeMap::SetExecutableFileId::Marker32, FileInfo.FileId};
   AppendData(std::span {reinterpret_cast<const std::byte*>(&Data), sizeof(Data)});
 }
 
@@ -262,16 +273,6 @@ CodeCache::CodeCache(ContextImpl& CTX_)
   : CTX(CTX_) {}
 CodeCache::~CodeCache() = default;
 
-uint64_t CodeCache::ComputeCodeMapId(std::string_view Filename, int FD) {
-  if (Filename.empty()) {
-    return 0xffff'ffff'ffff'ffff;
-  }
-
-  // For now, we just use the file path as an identifier.
-  // TODO: Ensure the hash is unique enough to distinguish executables while remaining independent of the installation location
-  return XXH3_64bits(Filename.data(), Filename.size());
-}
-
 struct CodeCacheHeader {
   std::array<char, 4> Magic = ExpectedMagic;
   // Version history:
@@ -304,7 +305,7 @@ bool CodeCache::SaveData(Core::InternalThreadState& Thread, int fd, const Execut
   std::ranges::copy(GIT_HASH, header.FEXVersion);
   header.NumBlocks = LookupCache.BlockList.size();
   header.NumCodePages = LookupCache.CodePages.size();
-  header.CodeBufferSize = FEXCore::AlignUp(CTX.LatestOffset, Utils::FEX_PAGE_SIZE);
+  header.CodeBufferSize = FEXCore::AlignUp(CodeBuffer->AllocatedSpaceUsed(), Utils::FEX_PAGE_SIZE);
   header.NumRelocations = Relocations.size();
   header.SerializedBaseAddress = SerializedBaseAddress;
   ::write(fd, &header, sizeof(header));
@@ -327,7 +328,7 @@ bool CodeCache::SaveData(Core::InternalThreadState& Thread, int fd, const Execut
 
       Guest -= SourceBinary.FileStartVA;
       ::write(fd, &Guest, sizeof(Guest));
-      uint64_t HostCode = Host->HostCode - reinterpret_cast<uintptr_t>(CodeBuffer->Ptr);
+      uint64_t HostCode = Host->HostCode - reinterpret_cast<uintptr_t>(CodeBuffer->GetBufferBase());
       ::write(fd, &HostCode, sizeof(HostCode));
       uint64_t NumCodePages = Host->CodePages.size();
       ::write(fd, &NumCodePages, sizeof(NumCodePages));
@@ -364,8 +365,9 @@ bool CodeCache::SaveData(Core::InternalThreadState& Thread, int fd, const Execut
 #endif
 
   // Dump the host code (relocated for position-independent serialization)
-  std::span CodeBufferData(reinterpret_cast<std::byte*>(CodeBuffer->Ptr), reinterpret_cast<std::byte*>(CodeBuffer->Ptr) + CTX.LatestOffset);
-  if (!ApplyCodeRelocations(SerializedBaseAddress, CodeBufferData, Relocations, 0, true)) {
+  std::span CodeBufferData(reinterpret_cast<std::byte*>(CodeBuffer->GetBufferBase()),
+                           reinterpret_cast<std::byte*>(CodeBuffer->GetBufferBase()) + CodeBuffer->AllocatedSpaceUsed());
+  if (!ApplyCodeRelocations(SerializedBaseAddress, CodeBufferData, Relocations, true)) {
     LOGMAN_THROW_A_FMT(false, "Failed to apply code relocations");
     return false;
   }
@@ -408,7 +410,7 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
       ERROR_AND_DIE_FMT("Failed to create cache load validation context");
     }
 
-    ValidationThread.reset(ValidationCTX->CreateThread(0, 0, nullptr));
+    ValidationThread.reset(ValidationCTX->CreateThread(nullptr));
 
     auto Frame = ValidationThread->CurrentFrame;
     Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = &ValidationGDT[0];
@@ -429,11 +431,12 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
   while (CachedCode.size_bytes() > NewCodeBuffer->UsableSize()) {
     ValidationCTX->ClearCodeCache(ValidationThread.get());
     NewCodeBuffer = ValidationCTX->GetLatest();
-    LogMan::Msg::IFmt("Increased cache validation code buffer size to {} MiB", NewCodeBuffer->AllocatedSize / 1024 / 1024);
+    LogMan::Msg::IFmt("Increased cache validation code buffer size to {} MiB", NewCodeBuffer->TotalAllocationSize() / 1024 / 1024);
   }
 
   std::span<std::byte> CodeBufferRangeRef =
-    std::as_writable_bytes(std::span {NewCodeBuffer->Ptr, NewCodeBuffer->Ptr + NewCodeBuffer->UsableSize()}).subspan(0, CachedCode.size_bytes());
+    std::as_writable_bytes(std::span {NewCodeBuffer->GetBufferBase(), NewCodeBuffer->GetBufferBase() + NewCodeBuffer->UsableSize()})
+      .subspan(0, CachedCode.size_bytes());
 
   while (!GuestBlocks.empty()) {
     auto [CompiledBlocks, _, _2, _3, _4] = ValidationCTX->CompileCode(ValidationThread.get(), *GuestBlocks.begin(), 0 /* TODO: Set MaxInst? */);
@@ -447,12 +450,12 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
   NewRelocations.erase(std::remove_if(NewRelocations.begin(), NewRelocations.end(), [](const CPU::Relocation& Reloc) {
     return Reloc.Header.Type != CPU::RelocationTypes::RELOC_NAMED_SYMBOL_LITERAL && Reloc.Header.Type != CPU::RelocationTypes::RELOC_NAMED_THUNK_MOVE;
   }));
-  (void)ApplyCodeRelocations(Section.FileStartVA, CodeBufferRangeRef, NewRelocations, 0, false);
+  (void)ApplyCodeRelocations(Section.FileStartVA, CodeBufferRangeRef, NewRelocations, false);
 
-  if (ValidationCTX->LatestOffset <= CodeBufferRangeRef.size()) {
+  if (NewCodeBuffer->AllocatedSpaceUsed() <= CodeBufferRangeRef.size()) {
     // Reference compilation produced fewer bytes than our cache, so validation is going to fail.
     // Make sure we don't output any garbage bytes though.
-    CodeBufferRangeRef = CodeBufferRangeRef.subspan(0, ValidationCTX->LatestOffset);
+    CodeBufferRangeRef = CodeBufferRangeRef.subspan(0, NewCodeBuffer->AllocatedSpaceUsed());
   }
 
   auto [Mismatch, _] = std::mismatch(CodeBufferRangeRef.begin(), CodeBufferRangeRef.end(), CachedCode.begin());
@@ -479,7 +482,7 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
           if (tail->RIP >= Section.BeginVA && tail->RIP < Section.EndVA) {
             auto [IRView, TotalInstructions, TotalInstructionsLength, StartAddr, Length, _] =
               ValidationCTX->GenerateIR(ValidationThread.get(), tail->RIP, false, FEXCore::Config::Get_MAXINST());
-            fextl::stringstream ss;
+            fextl::ostringstream ss;
             FEXCore::IR::Dump(&ss, &*IRView);
             LogMan::Msg::EFmt("IR:\n{}", ss.str());
           } else {
@@ -503,47 +506,153 @@ void CodeCache::Validate(const ExecutableFileSectionInfo& Section, fextl::set<ui
 
   // Reset Context state for next validation
   ValidationThread->LookupCache->ClearCache(ValidationThread->LookupCache->AcquireWriteLock());
-  ValidationCTX->LatestOffset = 0;
+  NewCodeBuffer->Reset();
 
   LogMan::Msg::IFmt("            successfully validated cache");
 }
 
-bool CodeCache::ApplyCodeRelocations(uint64_t GuestEntry, std::span<std::byte> Code,
-                                     std::span<const FEXCore::CPU::Relocation> EntryRelocations, uint32_t RelocationOffset, bool ForStorage) {
-  CPU::Arm64Emitter Emitter(&CTX, Code.data(), Code.size_bytes());
-  for (size_t j = 0; j < EntryRelocations.size(); ++j) {
-    const FEXCore::CPU::Relocation& Reloc = EntryRelocations[j];
-    LOGMAN_THROW_A_FMT(Reloc.Header.Offset >= RelocationOffset, "Invalid relocation offset");
-    LOGMAN_THROW_A_FMT(Reloc.Header.Offset - RelocationOffset < Code.size_bytes(), "Invalid relocation offset");
-    Emitter.SetCursorOffset(Reloc.Header.Offset - RelocationOffset);
+static inline void ApplySymbolLiteralRelocation(ContextImpl& CTX, const CPU::RelocNamedSymbolLiteral::NamedSymbol Symbol,
+                                                uint64_t GuestEntry, CPU::Arm64Emitter& Emitter, bool ForStorage) {
+  // Generate a literal so we can place it
+  uint64_t Pointer = ForStorage ? 0 : GetNamedSymbolLiteral(CTX, Symbol);
+  Emitter.dc64(Pointer);
+}
 
-    switch (Reloc.Header.Type) {
+static inline bool
+ApplyThunkMoveRelocation(ContextImpl& CTX, const IR::SHA256Sum* Symbol, uint32_t RegisterIndex, CPU::Arm64Emitter& Emitter, bool ForStorage) {
+  uint64_t Pointer = ForStorage ? 0 : reinterpret_cast<uint64_t>(CTX.ThunkHandler->LookupThunk(*Symbol));
+  if (Pointer == ~0ULL) {
+    return false;
+  }
+  // TODO: Pointers are required to fit within 48-bit VA space.
+  // But forcing 6-byte broke relocations.
+  Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(RegisterIndex), Pointer, CPU::Arm64Emitter::PadType::DOPAD);
+  return true;
+}
+
+static inline void ApplyRIPLiteralRelocation(ContextImpl& CTX, uint64_t GuestRIP, uint64_t GuestEntry, CPU::Arm64Emitter& Emitter) {
+  Emitter.dc64(GuestEntry + GuestRIP);
+}
+
+static inline void
+ApplyRIPMoveRelocation(ContextImpl& CTX, uint64_t GuestRIP, uint8_t RegisterIndex, uint64_t GuestEntry, CPU::Arm64Emitter& Emitter) {
+  uint64_t Pointer = GuestRIP + GuestEntry;
+  // TODO: Pointers are required to fit within 48-bit VA space.
+  // But forcing 6-byte broke relocations.
+  Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(RegisterIndex), Pointer, CPU::Arm64Emitter::PadType::DOPAD);
+}
+
+static inline int64_t ReadLiveGuestData(uint64_t SiteAddress, uint8_t ValueSize) {
+  uint64_t Raw = 0;
+  memcpy(&Raw, reinterpret_cast<const void*>(SiteAddress), ValueSize);
+  // manual sign-extension from guest live bytes
+  if (ValueSize == 1) {
+    return (int8_t)Raw;
+  } else if (ValueSize == 2) {
+    return (int16_t)Raw;
+  } else if (ValueSize == 4) {
+    return (int32_t)Raw;
+  } else {
+    return (int64_t)Raw;
+  }
+}
+
+static inline void ApplyPatchableDataRelocation(uint64_t SiteAddress, uint8_t ValueSize, uint8_t RegisterIndex, CPU::Arm64Emitter& Emitter) {
+  Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(RegisterIndex), ReadLiveGuestData(SiteAddress, ValueSize),
+                       CPU::Arm64Emitter::PadType::DOPAD);
+}
+
+static inline void ApplyPatchableRIPLiteralRelocation(uint64_t SiteAddress, uint8_t ValueSize, CPU::Arm64Emitter& Emitter) {
+  Emitter.dc64(SiteAddress + ValueSize + ReadLiveGuestData(SiteAddress, ValueSize));
+}
+
+static inline void ApplyPatchableRIPMoveRelocation(uint64_t SiteAddress, uint8_t ValueSize, uint8_t RegisterIndex, CPU::Arm64Emitter& Emitter) {
+  const uint64_t Target = SiteAddress + ValueSize + ReadLiveGuestData(SiteAddress, ValueSize);
+  Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(RegisterIndex), Target, CPU::Arm64Emitter::PadType::DOPAD);
+}
+
+static inline void ApplyPatchableCRCMoveRelocation(uint64_t SiteAddress, uint8_t ValueSize, uint8_t RegisterIndex, CPU::Arm64Emitter& Emitter) {
+  const uint64_t Target = FEXCore::Utils::crc32(reinterpret_cast<const uint8_t*>(SiteAddress), ValueSize);
+  Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(RegisterIndex), Target, CPU::Arm64Emitter::PadType::DOPAD);
+}
+
+bool CodeCache::ApplyPackedCodeRelocations(uint64_t GuestEntry, std::span<std::byte> Code,
+                                           std::span<const DiskCache::BlobSmallRelocation> SmallRelocs,
+                                           std::span<const DiskCache::BlobThunkRelocation> ThunkRelocs) {
+  CPU::Arm64Emitter Emitter(&CTX, Code.data(), Code.size_bytes());
+  for (auto& Reloc : SmallRelocs) {
+    LOGMAN_THROW_A_FMT(Reloc.Offset < Code.size_bytes(), "Invalid relocation offset");
+    Emitter.SetCursorOffset(Reloc.Offset);
+    switch ((CPU::RelocationTypes)Reloc.Type) {
     case FEXCore::CPU::RelocationTypes::RELOC_NAMED_SYMBOL_LITERAL: {
-      // Generate a literal so we can place it
-      uint64_t Pointer = ForStorage ? 0 : GetNamedSymbolLiteral(CTX, Reloc.NamedSymbolLiteral.Symbol);
-      Emitter.dc64(Pointer);
-      break;
-    }
-    case FEXCore::CPU::RelocationTypes::RELOC_NAMED_THUNK_MOVE: {
-      uint64_t Pointer = ForStorage ? 0 : reinterpret_cast<uint64_t>(CTX.ThunkHandler->LookupThunk(Reloc.NamedThunkMove.Symbol));
-      if (Pointer == ~0ULL) {
-        return false;
-      }
-      // TODO: Pointers are required to fit within 48-bit VA space.
-      // But forcing 6-byte broke relocations.
-      Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(Reloc.NamedThunkMove.RegisterIndex), Pointer,
-                           CPU::Arm64Emitter::PadType::DOPAD);
+      ApplySymbolLiteralRelocation(CTX, (CPU::RelocNamedSymbolLiteral::NamedSymbol)Reloc.Named.Symbol, GuestEntry, Emitter, false);
       break;
     }
     case FEXCore::CPU::RelocationTypes::RELOC_GUEST_RIP_LITERAL: {
-      Emitter.dc64(GuestEntry + Reloc.GuestRIP.GuestRIP);
+      ApplyRIPLiteralRelocation(CTX, Reloc.RIPLiteral.GuestRIP, GuestEntry, Emitter);
       break;
     }
     case FEXCore::CPU::RelocationTypes::RELOC_GUEST_RIP_MOVE: {
-      uint64_t Pointer = Reloc.GuestRIP.GuestRIP + GuestEntry;
-      // TODO: Pointers are required to fit within 48-bit VA space.
-      // But forcing 6-byte broke relocations.
-      Emitter.LoadConstant(ARMEmitter::Size::i64Bit, ARMEmitter::Register(Reloc.GuestRIP.RegisterIndex), Pointer, CPU::Arm64Emitter::PadType::DOPAD);
+      ApplyRIPMoveRelocation(CTX, Reloc.RIPMove.GuestRIP, Reloc.RIPMove.RegisterIndex, GuestEntry, Emitter);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_PATCHABLE_DATA_MOVE: {
+      ApplyPatchableDataRelocation(GuestEntry + Reloc.PatchableData.SiteOffset, Reloc.PatchableData.ValueSize,
+                                   Reloc.PatchableData.RegisterIndex, Emitter);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_PATCHABLE_RIP_LITERAL: {
+      ApplyPatchableRIPLiteralRelocation(GuestEntry + Reloc.PatchableData.SiteOffset, Reloc.PatchableData.ValueSize, Emitter);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_PATCHABLE_RIP_MOVE: {
+      ApplyPatchableRIPMoveRelocation(GuestEntry + Reloc.PatchableData.SiteOffset, Reloc.PatchableData.ValueSize,
+                                      Reloc.PatchableData.RegisterIndex, Emitter);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_PATCHABLE_CRC_MOVE: {
+      ApplyPatchableCRCMoveRelocation(GuestEntry + Reloc.PatchableData.SiteOffset, Reloc.PatchableData.ValueSize,
+                                      Reloc.PatchableData.RegisterIndex, Emitter);
+      break;
+    }
+    default: ERROR_AND_DIE_FMT("Unknown packed relocation type {}", ToUnderlying((CPU::RelocationTypes)Reloc.Type));
+    }
+  }
+  for (auto& Reloc : ThunkRelocs) {
+    LOGMAN_THROW_A_FMT(Reloc.Offset < Code.size_bytes(), "Invalid relocation offset");
+    Emitter.SetCursorOffset(Reloc.Offset);
+    if (!ApplyThunkMoveRelocation(CTX, (const IR::SHA256Sum*)Reloc.SymbolHash, Reloc.RegisterIndex, Emitter, false)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool CodeCache::ApplyCodeRelocations(uint64_t GuestEntry, std::span<std::byte> Code,
+                                     std::span<const FEXCore::CPU::Relocation> EntryRelocations, bool ForStorage) {
+  CPU::Arm64Emitter Emitter(&CTX, Code.data(), Code.size_bytes());
+  for (size_t j = 0; j < EntryRelocations.size(); ++j) {
+    const FEXCore::CPU::Relocation& Reloc = EntryRelocations[j];
+    LOGMAN_THROW_A_FMT(Reloc.Header.Offset < Code.size_bytes(), "Invalid relocation offset");
+    Emitter.SetCursorOffset(Reloc.Header.Offset);
+
+    switch (Reloc.Header.Type) {
+    case FEXCore::CPU::RelocationTypes::RELOC_NAMED_SYMBOL_LITERAL: {
+      ApplySymbolLiteralRelocation(CTX, Reloc.NamedSymbolLiteral.Symbol, GuestEntry, Emitter, ForStorage);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_NAMED_THUNK_MOVE: {
+      if (!ApplyThunkMoveRelocation(CTX, &Reloc.NamedThunkMove.Symbol, Reloc.NamedThunkMove.RegisterIndex, Emitter, ForStorage)) {
+        return false;
+      }
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_RIP_LITERAL: {
+      ApplyRIPLiteralRelocation(CTX, Reloc.GuestRIP.GuestRIP, GuestEntry, Emitter);
+      break;
+    }
+    case FEXCore::CPU::RelocationTypes::RELOC_GUEST_RIP_MOVE: {
+      ApplyRIPMoveRelocation(CTX, Reloc.GuestRIP.GuestRIP, Reloc.GuestRIP.RegisterIndex, GuestEntry, Emitter);
       break;
     }
 
@@ -613,7 +722,16 @@ CodeCache::LoadCache(std::span<std::byte> CacheFile, const ExecutableFileInfo& F
     return nullptr;
   }
   auto CodeBuffer = std::span {static_cast<std::byte*>(CodeBufferAllocation), header.CodeBufferSize};
-#else
+#elif defined(_M_ARM64EC)
+  // TODO: Implement lazy mapping on Windows
+  // NOTE: The executed code must have MEM_EXTENDED_PARAMETER_EC_CODE set, so we can't operate on the mapped cache file directly
+  void* CodeBufferAllocation = Allocator::VirtualAlloc(header.CodeBufferSize, true);
+  if (!CodeBufferAllocation) {
+    LogMan::Msg::EFmt("Failed to allocate code cache memory");
+    return nullptr;
+  }
+  auto CodeBuffer = std::span {reinterpret_cast<std::byte*>(CodeBufferAllocation), header.CodeBufferSize};
+#else // WoW64
   // TODO: Implement lazy mapping on Windows
   auto CodeBuffer = CodeDataInFile;
 #endif
@@ -868,7 +986,7 @@ void CodeCache::FinalizeCodePages(MappedCodeCacheFile& Code, std::span<std::byte
   auto StagingSpan = std::span {Staging, Size};
   for (size_t i = StartPage; i < EndPage; ++i) {
     auto PageRelocations = SpanPageRelocations(Code, i);
-    (void)ApplyCodeRelocations(Code.GuestBase, StagingSpan, PageRelocations, static_cast<uint32_t>(StartOffset), false);
+    (void)ApplyCodeRelocations(Code.GuestBase, StagingSpan, PageRelocations, false);
     Code.LoadedPages[i] = true;
   }
 
@@ -886,9 +1004,12 @@ void CodeCache::FinalizeCodePages(MappedCodeCacheFile& Code, std::span<std::byte
   Allocator::VirtualDontNeed(Code.CodeBufferInFile.data() + StartOffset, Size);
 #else
   // TODO: Implement lazy mapping on Windows
+#ifdef _M_ARM64EC
+  memcpy(Code.CodeBuffer.data() + StartOffset, Code.CodeBufferInFile.data() + StartOffset, Size);
+#endif
   for (size_t i = StartPage; i < EndPage; ++i) {
     auto PageRelocations = SpanPageRelocations(Code, i);
-    (void)ApplyCodeRelocations(Code.GuestBase, Code.CodeBuffer, PageRelocations, 0, false);
+    (void)ApplyCodeRelocations(Code.GuestBase, Code.CodeBuffer, PageRelocations, false);
     Code.LoadedPages[i] = true;
   }
 #endif

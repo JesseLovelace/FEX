@@ -11,6 +11,7 @@
 
 #include <cstdint>
 
+<<<<<<< HEAD
 #if defined(__linux__)
 #include <linux/prctl.h>
 #include <sys/prctl.h>
@@ -36,9 +37,14 @@ namespace CPU {
   static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
 #endif
 
+=======
+namespace FEXCore {
+namespace CPU {
+>>>>>>> upstream/main
   constexpr static uint64_t NamedVectorConstants[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX][2] = {
     {0x0003'0002'0001'0000ULL, 0x0007'0006'0005'0004ULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX
     {0x000B'000A'0009'0008ULL, 0x000F'000E'000D'000CULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX_UPPER
+    {0x0706'0504'0302'0100ULL, 0x0F0E'0D0C'0B0A'0908ULL}, // NAMED_VECTOR_INCREMENTAL_U8_INDEX
     {0x0000'0000'8000'0000ULL, 0x0000'0000'8000'0000ULL}, // NAMED_VECTOR_PADDSUBPS_INVERT
     {0x0000'0000'8000'0000ULL, 0x0000'0000'8000'0000ULL}, // NAMED_VECTOR_PADDSUBPS_INVERT_UPPER
     {0x8000'0000'0000'0000ULL, 0x0000'0000'0000'0000ULL}, // NAMED_VECTOR_PADDSUBPD_INVERT
@@ -289,9 +295,9 @@ namespace CPU {
     return TotalLUT;
   }()};
 
-  CPUBackend::CPUBackend(CodeBufferManager& CodeBuffers, FEXCore::Core::InternalThreadState* ThreadState)
+  CPUBackend::CPUBackend(SharedCodeBufferManager& SharedCodeBuffers, FEXCore::Core::InternalThreadState* ThreadState)
     : ThreadState(ThreadState)
-    , CodeBuffers(CodeBuffers) {
+    , SharedCodeBuffers(SharedCodeBuffers) {
 
     auto& Ptrs = ThreadState->CurrentFrame->Pointers;
 
@@ -330,6 +336,7 @@ namespace CPU {
 
   CPUBackend::~CPUBackend() = default;
 
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml460 (#75): every C++ toucher of CurrentCodeBuffer /
    * SignalHandlerCodeBuffers holds this while the sweeper may run (see the
@@ -400,10 +407,13 @@ namespace CPU {
 #ifdef FEX_IOS_HOST
     IosMigrateLockGuard g {IosMigrateLock};
 #endif
+=======
+  auto CPUBackend::AcquireNewSharedCodeBuffer() -> CodeBuffer* {
+>>>>>>> upstream/main
     auto PrevCodeBuffer = CurrentCodeBuffer;
 
     // Resize the code buffer and reallocate our code size
-    CurrentCodeBuffer = CodeBuffers.StartLargerCodeBuffer();
+    CurrentCodeBuffer = SharedCodeBuffers.StartLargerCodeBuffer();
 
     RegisterForSignalHandler(std::move(PrevCodeBuffer));
     return CurrentCodeBuffer.get();
@@ -445,10 +455,14 @@ namespace CPU {
   }
 
   fextl::shared_ptr<CodeBuffer> CPUBackend::CheckCodeBufferUpdate() {
+<<<<<<< HEAD
     auto NewCodeBuffer = CodeBuffers.GetLatest();
 #ifdef FEX_IOS_HOST
     IosMigrateLockGuard g {IosMigrateLock};
 #endif
+=======
+    auto NewCodeBuffer = SharedCodeBuffers.GetLatest();
+>>>>>>> upstream/main
     if (CurrentCodeBuffer != NewCodeBuffer) {
       RegisterForSignalHandler(CurrentCodeBuffer);
       return std::exchange(CurrentCodeBuffer, NewCodeBuffer);
@@ -456,6 +470,7 @@ namespace CPU {
     return nullptr;
   }
 
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml460 (#75): remote-migrate a PARKED thread off a stale
    * generation. Runs on the SWEEPER's thread; the caller has verified under
@@ -883,12 +898,19 @@ namespace CPU {
       // when checking if the address is in the code buffer.
       uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Buffer.Ptr) + Buffer.AllocatedSize - 1, FEXCore::Utils::FEX_PAGE_SIZE);
       return (Address >= reinterpret_cast<uintptr_t>(Buffer.Ptr) && Address < LastPageAddr);
+=======
+  bool CPUBackend::IsAddressInCodeBuffer(uintptr_t Address) const {
+    const auto CheckCodeBuffer = [](const CodeBuffer& Buffer, uintptr_t Address) {
+      const auto BufferPtr = reinterpret_cast<uintptr_t>(Buffer.GetBufferBase());
+      const uintptr_t LastPageAddr = BufferPtr + Buffer.UsableSize();
+      return (Address >= BufferPtr && Address < LastPageAddr);
+>>>>>>> upstream/main
     };
 
     if (CheckCodeBuffer(*CurrentCodeBuffer, Address)) {
       return true;
     }
-    for (auto& Buffer : SignalHandlerCodeBuffers) {
+    for (const auto& Buffer : SignalHandlerCodeBuffers) {
       if (CheckCodeBuffer(*Buffer, Address)) {
         return true;
       }

@@ -74,6 +74,9 @@ public:
   }
 };
 
+namespace FEX::Windows::Logging {
+void UnimplementedLog(const char* Func);
+}
 
 /* Encode the stub's source location in the exit status so we can identify
  * which UNIMPLEMENTED was hit. The 16 LSBs of __LINE__ go into bits 0-15;
@@ -83,6 +86,7 @@ public:
   do {                                                                        \
     /* Use __FILE__'s last byte before the extension as a discriminator. */   \
     unsigned _file_tag = (unsigned char)(__FILE__[sizeof(__FILE__) - 6]);     \
+    FEX::Windows::Logging::UnimplementedLog(__func__);                        \
     NtTerminateProcess(NtCurrentProcess(),                                    \
         (NTSTATUS)(0xFE000000u | ((_file_tag & 0xFFu) << 16) |                \
                    (__LINE__ & 0xFFFFu)));                                    \

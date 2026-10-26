@@ -11,7 +11,8 @@
       "AFP",
       "FLAGM",
       "FLAGM2"
-    ]
+    ],
+    "BinaryCacheVersion": 37
   },
   "Comment": [
     "MMX instructions are defined as optimal without SRA being used for these instructions.",
@@ -651,7 +652,7 @@
       "Comment": "0x0f 0x50",
       "ExpectedArm64ASM": [
         "ushr v2.4s, v16.4s, #31",
-        "ldr q3, [x28, #3280]",
+        "ldr q3, [x28, #3056]",
         "ushl v2.4s, v2.4s, v3.4s",
         "addv s2, v2.4s",
         "mov w4, v2.s[0]"
@@ -662,7 +663,7 @@
       "Comment": "0x0f 0x50",
       "ExpectedArm64ASM": [
         "ushr v2.4s, v16.4s, #31",
-        "ldr q3, [x28, #3280]",
+        "ldr q3, [x28, #3056]",
         "ushl v2.4s, v2.4s, v3.4s",
         "addv s2, v2.4s",
         "mov w4, v2.s[0]"
@@ -1591,18 +1592,20 @@
       ]
     },
     "shld ax, bx, 16": {
-      "ExpectedInstructionCount": 9,
+      "ExpectedInstructionCount": 11,
       "Comment": "0x0f 0xac",
       "ExpectedArm64ASM": [
         "uxth w20, w6",
         "uxth w21, w4",
-        "lsl x21, x21, #16",
-        "orr x26, x21, x20",
+        "lsl x22, x21, #16",
+        "orr x26, x22, x20",
         "cmn wzr, w26, lsl #16",
-        "bfxil x4, x26, #0, #16",
-        "mrs x20, nzcv",
-        "eor w20, w20, #0x20000000",
-        "msr nzcv, x20"
+        "eor x20, x21, #0x1",
+        "ubfx x20, x20, #0, #1",
+        "mrs x21, nzcv",
+        "bfi w21, w20, #29, #1",
+        "msr nzcv, x21",
+        "bfxil x4, x26, #0, #16"
       ]
     },
     "shld ax, bx, 31": {
@@ -2120,7 +2123,7 @@
       "ExpectedArm64ASM": [
         "mov w27, #0x0",
         "subs w26, w4, w4",
-        "mov x4, x6"
+        "mov w4, w6"
       ]
     },
     "cmpxchg [rcx], ebx": {
@@ -3546,7 +3549,7 @@
       "ExpectedInstructionCount": 3,
       "Comment": "0x0f 0xc6",
       "ExpectedArm64ASM": [
-        "ldr x0, [x28, #2744]",
+        "ldr x0, [x28, #2496]",
         "ldr q2, [x0, #16]",
         "tbl v16.16b, {v16.16b, v17.16b}, v2.16b"
       ]
@@ -3555,7 +3558,7 @@
       "ExpectedInstructionCount": 5,
       "Comment": "0x0f 0xc6",
       "ExpectedArm64ASM": [
-        "ldr x0, [x28, #2744]",
+        "ldr x0, [x28, #2496]",
         "ldr q2, [x0, #16]",
         "mov v0.16b, v17.16b",
         "mov v1.16b, v16.16b",
@@ -3567,7 +3570,7 @@
       "Comment": "0x0f 0xc6",
       "ExpectedArm64ASM": [
         "ldr q2, [x4]",
-        "ldr x0, [x28, #2744]",
+        "ldr x0, [x28, #2496]",
         "ldr q3, [x0, #16]",
         "mov v0.16b, v16.16b",
         "mov v1.16b, v2.16b",
@@ -3695,7 +3698,7 @@
         "mov w20, #0xffff",
         "strb w20, [x28, #1202]",
         "ldr d2, [x28, #1056]",
-        "ldr d3, [x28, #3408]",
+        "ldr d3, [x28, #3184]",
         "cmlt v2.16b, v2.16b, #0",
         "and v2.8b, v2.8b, v3.8b",
         "addp v2.16b, v2.16b, v2.16b",

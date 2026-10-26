@@ -4,6 +4,8 @@
 #include "Common/JitSymbols.h"
 #include "Interface/Core/CPUBackend.h"
 #include "Interface/Core/CPUID.h"
+#include "Interface/Core/DiskCache.h"
+#include "Interface/Core/SharedCodeBufferManager.h"
 #include <Interface/IR/IntrusiveIRList.h>
 #include <FEXCore/Config/Config.h>
 #include <FEXCore/Core/Context.h>
@@ -81,7 +83,6 @@ public:
   FEX_CONFIG_OPT(EnableLazyCodeCaching, ENABLELAZYCODECACHINGWIP);
   FEX_CONFIG_OPT(EnableCodeCacheValidation, ENABLECODECACHEVALIDATION);
 
-  uint64_t ComputeCodeMapId(std::string_view Filename, int FD) override;
   bool SaveData(Core::InternalThreadState&, int TargetFD, const ExecutableFileSectionInfo&, uint64_t SerializedBaseAddress) override;
 
   fextl::unique_ptr<MappedCodeCacheFile> LoadCache(std::span<std::byte> CacheFile, const ExecutableFileInfo&, uint64_t FileStartVA) override;
@@ -120,17 +121,20 @@ public:
    * Note that FEX relocations are unrelated to ELF/PE relocations.
    *
    * @param GuestDelta Guest address offset to apply to RIP-relative data
-   * @param RelocationOffset Offset to subtract from relocation target offsets
    * @param ForStorage True for serializing data (producing deterministic output); false for de-serializing it (resolving dynamic symbols)
    *
    * @return Returns true on success
    */
   [[nodiscard]]
-  bool ApplyCodeRelocations(uint64_t GuestDelta, std::span<std::byte> Code, std::span<const CPU::Relocation> Relocations,
-                            uint32_t RelocationOffset, bool ForStorage);
+  bool ApplyCodeRelocations(uint64_t GuestDelta, std::span<std::byte> Code, std::span<const CPU::Relocation> Relocations, bool ForStorage);
+
+  // Same but on disk cache packed relocations
+  [[nodiscard]]
+  bool ApplyPackedCodeRelocations(uint64_t GuestDelta, std::span<std::byte> Code, std::span<const DiskCache::BlobSmallRelocation> SmallRelocs,
+                                  std::span<const DiskCache::BlobThunkRelocation> ThunkRelocs);
 };
 
-class ContextImpl final : public FEXCore::Context::Context, public CPU::CodeBufferManager {
+class ContextImpl final : public FEXCore::Context::Context, public CPU::SharedCodeBufferManager {
 public:
   // Context base class implementation.
   bool InitCore() override;
@@ -155,32 +159,32 @@ public:
   void SetXMMRegistersFromState(FEXCore::Core::InternalThreadState* Thread, const __uint128_t* XMM_Low, const __uint128_t* YMM_High) override;
 
   /**
-   * @brief Used to create FEX thread objects in preparation for creating a true OS thread. Does set a TID or PID.
+   * @brief Used to create FEX thread objects in preparation for creating a true OS thread.
    *
-   * @param InitialRIP The starting RIP of this thread
-   * @param StackPointer The starting RSP of this thread
    * @param NewThreadState The initial thread state to setup for our state, if inheriting.
    *
    * @return The InternalThreadState object that tracks all of the emulated thread's state
    *
    * Usecases:
    *  Parent thread Creation:
-   *    - Thread = CreateThread(InitialRIP, InitialStack, nullptr, 0);
+   *    - Thread = CreateThread();
+   *    - Thread->CurrentFrame->State.rip = InitialRIP;
+   *    - Thread->CurrentFrame->State.gregs[FEXCore::X86State::REG_RSP] = InitialStack;
    *    - CTX->ExecuteThread(Thread);
    *  OS thread Creation:
-   *    - Thread = CreateThread(0, 0, NewState, PPID);
+   *    - Thread = CreateThread(NewState);
    *    - Thread->ExecutionThread = FEXCore::Threads::Thread::Create(ThreadHandler, Arg);
    *    - ThreadHandler calls `CTX->ExecuteThread(Thread)`
    *  OS fork (New thread created with a clone of thread state):
    *    - clone{2, 3}
-   *    - Thread = CreateThread(0, 0, CopyOfThreadState, PPID);
+   *    - Thread = CreateThread(CopyOfThreadState);
    *    - ExecuteThread(Thread); // Starts executing without creating another host thread
    *  Thunk callback executing guest code from native host thread
-   *    - Thread = CreateThread(0, 0, NewState, PPID);
+   *    - Thread = CreateThread(NewState);
    *    - HandleCallback(Thread, RIP);
    */
 
-  FEXCore::Core::InternalThreadState* CreateThread(uint64_t InitialRIP, uint64_t StackPointer, const FEXCore::Core::CPUState* NewThreadState) override;
+  FEXCore::Core::InternalThreadState* CreateThread(const FEXCore::Core::CPUState* NewThreadState) override;
 
   /**
    * @brief Destroys this FEX thread object and stops tracking it internally
@@ -200,6 +204,8 @@ public:
   FEXCore::CPUID::FunctionResults RunCPUIDFunction(uint32_t Function, uint32_t Leaf) override;
   FEXCore::CPUID::XCRResults RunXCRFunction(uint32_t Function) override;
   FEXCore::CPUID::FunctionResults RunCPUIDFunctionName(uint32_t Function, uint32_t Leaf, uint32_t CPU) override;
+
+  virtual void InitDiskCache() override {}
 
   CodeCache& GetCodeCache() override {
     return CodeCache;
@@ -242,11 +248,15 @@ public:
   }
 
   void MarkMonoBackpatcherBlock(uint64_t BlockEntry) override;
+  std::atomic<uint64_t>& GetMonoBackPatcherBlock() {
+    return MonoBackpatcherBlock;
+  }
 
   // Manual debugging tooling which is useful for developers.
   struct TrackingEmpty {
     // RIP stepping handling
     virtual void AddSingleStepTarget(uint64_t GuestRIP) {}
+    virtual void AddSingleStepTargetRange(uint64_t RIPBegin, uint64_t RipEnd) {}
     virtual void AllTargetSingleStep() {}
     virtual void RemoveSingleStepTarget(uint64_t GuestRIP) {}
     virtual bool IsSingleStepTarget(uint64_t GuestRIP) {
@@ -269,6 +279,10 @@ public:
       SingleStepTargets.emplace(GuestRIP);
     }
 
+    virtual void AddSingleStepTargetRange(uint64_t RIPBegin, uint64_t RIPEnd) override {
+      SingleStepRanges.emplace_back(Range {RIPBegin, RIPEnd});
+    }
+
     void RemoveSingleStepTarget(uint64_t GuestRIP) override {
       SingleStepTargets.erase(GuestRIP);
     }
@@ -278,7 +292,7 @@ public:
     }
 
     bool IsSingleStepTarget(uint64_t GuestRIP) override {
-      return SingleStepEverything || SingleStepTargets.contains(GuestRIP);
+      return SingleStepEverything || SingleStepTargets.contains(GuestRIP) || IsInRange(GuestRIP);
     }
 
     void AddWriteWatchPoint(uint64_t Ptr) override {
@@ -302,6 +316,14 @@ public:
     fextl::set<uint64_t> SingleStepTargets {};
     fextl::set<uint64_t> WatchWriteTargets {};
     fextl::set<uint64_t> WatchReadTargets {};
+    struct Range {
+      uint64_t Begin, End;
+    };
+    fextl::vector<Range> SingleStepRanges {};
+
+    bool IsInRange(uint64_t RIP) const {
+      return std::ranges::any_of(SingleStepRanges, [RIP](const auto& range) { return RIP >= range.Begin && RIP <= range.End; });
+    }
 
     static bool ContainsRange(const fextl::set<uint64_t>& Set, uint64_t Ptr, size_t Size) {
       for (auto it = Set.lower_bound(Ptr); it != Set.end(); --it) {
@@ -362,8 +384,10 @@ public:
     FEX_CONFIG_OPT(DisableTelemetry, DISABLETELEMETRY);
     FEX_CONFIG_OPT(DisableVixlIndirectCalls, DISABLE_VIXL_INDIRECT_RUNTIME_CALLS);
     FEX_CONFIG_OPT(SmallTSCScale, SMALLTSCSCALE);
+    FEX_CONFIG_OPT(SoftwareRNG, SOFTWARERNG);
     FEX_CONFIG_OPT(StrictInProcessSplitLocks, STRICTINPROCESSSPLITLOCKS);
     FEX_CONFIG_OPT(MonoHacks, MONOHACKS);
+    FEX_CONFIG_OPT(JITFeatures, JITFEATURES);
   } Config;
 
   // Host address of guest address 0, see Config.GuestBase. A constant 0 when the build has no
@@ -377,6 +401,10 @@ public:
     return 0;
   }
 #endif
+  bool SoftwareRNGEnabled() const {
+    return Config.SoftwareRNG() && HostRNGAvailable;
+  }
+  bool HostRNGAvailable {};
 
   FEXCore::Utils::WritePriorityMutex::Mutex CodeInvalidationMutex {};
 
@@ -389,6 +417,7 @@ public:
   FEXCore::HLE::SourcecodeResolver* SourcecodeResolver {};
   FEXCore::ThunkHandler* ThunkHandler {};
   fextl::unique_ptr<FEXCore::CPU::Dispatcher> Dispatcher;
+  DiskCache::DiskCache DiskCache;
   CodeCache CodeCache;
   fextl::unique_ptr<CodeMapWriter> CodeMapWriter;
 
@@ -465,6 +494,8 @@ public:
   bool AreMonoHacksActive() const {
     return Config.MonoHacks && MonoDetected;
   }
+
+  bool RequiresRelocatableConstants() const;
 
 protected:
   void UpdateAtomicTSOEmulationConfig() {

@@ -7,7 +7,8 @@
     ],
     "DisabledHostFeatures": [
       "AFP"
-    ]
+    ],
+    "BinaryCacheVersion": 37
   },
   "Instructions": {
     "vpermq ymm0, ymm1, 1": {
@@ -664,235 +665,101 @@
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 00110011b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, s18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-4",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[1]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-3",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[4]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #0",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[5]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #1",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 00001111b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, s18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-4",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[1]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-3",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[2]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[3]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-1",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "udf #0x1111",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 01010101b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, s18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-4",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[2]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[4]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #0",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[6]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #2",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 10101010b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, z18.s[1]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-3",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[3]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-1",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[5]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #1",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[7]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #3",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "adr x16,",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 11001100b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, z18.s[2]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[3]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-1",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[6]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[7]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #3",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "add w0, w8, #0x4 (4)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 11011001b": {
-      "ExpectedInstructionCount": 20,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, z17.s[1]",
-        "mov z2.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-3",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z17.s[2]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z17.s[5]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #1",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "add w1, w0, #0x44 (68)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 11110000b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x02 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, z18.s[4]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #0",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[5]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #1",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[6]",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #2",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[7]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #3",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "add w0, w0, #0x440 (1088)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vpblendd ymm0, ymm1, ymm2, 11111111b": {
@@ -1956,25 +1823,17 @@
       ]
     },
     "vblendps ymm0, ymm1, ymm2, 10000001b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0c 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.s, s18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #-4",
-        "mov z2.s, p0/m, z1.s",
-        "msr nzcv, x0",
-        "mov z1.s, z18.s[7]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.s, #-4, #1",
-        "cmpeq p0.s, p7/z, z0.s, #3",
-        "mov z16.s, p0/m, z1.s",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "adr x1,",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.s, p7/m, z17.s",
+        "mov z16.s, p0/m, z18.s"
       ]
     },
     "vblendps ymm0, ymm1, ymm2, 11111111b": {
@@ -2034,255 +1893,199 @@
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0001b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, d18",
-        "mov z16.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-2",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "udf #0x1",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0010b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[1]",
-        "mov z16.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "udf #0x100",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0011b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, d18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-2",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[1]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "udf #0x101",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0100b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[2]",
-        "mov z16.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #0",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0101b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, d18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-2",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[2]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #0",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0110b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[1]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-1",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[2]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #0",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 0111b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z17.d[3]",
-        "mov z16.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1000b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[3]",
-        "mov z16.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1001b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, d18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-2",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[3]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1010b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[1]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-1",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[3]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1011b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z17.d[2]",
-        "mov z16.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #0",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1100b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z18.d[2]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #0",
-        "mov z2.d, p0/m, z1.d",
-        "msr nzcv, x0",
-        "mov z1.d, z18.d[3]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1101b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, z17.d[1]",
-        "mov z16.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-1",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1110b": {
-      "ExpectedInstructionCount": 7,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0d 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.d, d17",
-        "mov z16.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.d, #-2, #1",
-        "cmpeq p0.d, p7/z, z0.d, #-2",
-        "mov z16.d, p0/m, z1.d",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.d, p7/m, z17.d",
+        "mov z16.d, p0/m, z18.d"
       ]
     },
     "vblendpd ymm0, ymm1, ymm2, 1111b": {
@@ -2413,279 +2216,87 @@
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 00000001b": {
-      "ExpectedInstructionCount": 14,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, h18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-8",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[8]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #0",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 01110011b": {
-      "ExpectedInstructionCount": 38,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, z17.h[2]",
-        "mov z2.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-6",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[3]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-5",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[7]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-1",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[10]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #2",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[11]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #3",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[15]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #7",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "b #+0x4145414",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 01110111b": {
-      "ExpectedInstructionCount": 26,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, z17.h[3]",
-        "mov z2.d, z18.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-5",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[7]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-1",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[11]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #3",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z17.h[15]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #7",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "b #+0x4545454",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 00110011b": {
-      "ExpectedInstructionCount": 50,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, h18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-8",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[1]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-7",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[4]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-4",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[5]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-3",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[8]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #0",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[9]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #1",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[12]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #4",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[13]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #5",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "unallocated (Unallocated)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 01010101b": {
-      "ExpectedInstructionCount": 50,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, h18",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-8",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[2]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-6",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[4]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-4",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[6]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-2",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[8]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #0",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[10]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #2",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[12]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #4",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[14]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #6",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "add w17, w8, #0x444 (1092)",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 10101010b": {
-      "ExpectedInstructionCount": 50,
+      "ExpectedInstructionCount": 6,
       "Comment": [
         "Map 3 0b01 0x0e 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "mov z1.h, z18.h[1]",
-        "mov z2.d, z17.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-7",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[3]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-5",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[5]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-3",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[7]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #-1",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[9]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #1",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[11]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #3",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[13]",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #5",
-        "mov z2.h, p0/m, z1.h",
-        "msr nzcv, x0",
-        "mov z1.h, z18.h[15]",
-        "mov z16.d, z2.d",
-        "mrs x0, nzcv",
-        "index z0.h, #-8, #1",
-        "cmpeq p0.h, p7/z, z0.h, #7",
-        "mov z16.h, p0/m, z1.h",
-        "msr nzcv, x0"
+        "b #+0x8",
+        "smlalt z4.h, z2.b, z4.b",
+        "adr x0,",
+        "ldr p0, [x0]",
+        "mov z16.h, p7/m, z17.h",
+        "mov z16.h, p0/m, z18.h"
       ]
     },
     "vpblendw ymm0, ymm1, ymm2, 11111111b": {
@@ -2982,7 +2593,7 @@
       ],
       "ExpectedArm64ASM": [
         "mrs x20, fpcr",
-        "and x0, x20, #0xffffffffffbfffff",
+        "and x0, x20, #0xffffffffff3fffff",
         "orr x0, x0, #0x800000",
         "msr fpcr, x0",
         "fcvtn v16.4h, v17.4s",
@@ -2997,7 +2608,7 @@
       ],
       "ExpectedArm64ASM": [
         "mrs x20, fpcr",
-        "and x0, x20, #0xffffffffff7fffff",
+        "and x0, x20, #0xffffffffff3fffff",
         "orr x0, x0, #0x400000",
         "msr fpcr, x0",
         "fcvtn v16.4h, v17.4s",
@@ -3052,7 +2663,7 @@
       ],
       "ExpectedArm64ASM": [
         "mrs x20, fpcr",
-        "and x0, x20, #0xffffffffffbfffff",
+        "and x0, x20, #0xffffffffff3fffff",
         "orr x0, x0, #0x800000",
         "msr fpcr, x0",
         "fcvtnt z2.h, p7/m, z17.s",
@@ -3069,7 +2680,7 @@
       ],
       "ExpectedArm64ASM": [
         "mrs x20, fpcr",
-        "and x0, x20, #0xffffffffff7fffff",
+        "and x0, x20, #0xffffffffff3fffff",
         "orr x0, x0, #0x400000",
         "msr fpcr, x0",
         "fcvtnt z2.h, p7/m, z17.s",
@@ -3937,31 +3548,41 @@
       ]
     },
     "vpclmulqdq ymm0, ymm1, ymm2, 00000b": {
-      "ExpectedInstructionCount": -1,
-      "Skip": "Yes",
+      "ExpectedInstructionCount": 1,
       "Comment": [
         "Map 3 0b01 0x44 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "pmullb z16.q, z17.d, z18.d"
       ]
     },
     "vpclmulqdq ymm0, ymm1, ymm2, 00001b": {
-      "ExpectedInstructionCount": -1,
-      "Skip": "Yes",
+      "ExpectedInstructionCount": 2,
       "Comment": [
         "Map 3 0b01 0x44 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "trn2 z0.d, z17.d, z17.d",
+        "pmullb z16.q, z0.d, z18.d"
       ]
     },
     "vpclmulqdq ymm0, ymm1, ymm2, 10000b": {
-      "ExpectedInstructionCount": -1,
-      "Skip": "Yes",
+      "ExpectedInstructionCount": 2,
       "Comment": [
         "Map 3 0b01 0x44 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "trn2 z0.d, z18.d, z18.d",
+        "pmullb z16.q, z17.d, z0.d"
       ]
     },
     "vpclmulqdq ymm0, ymm1, ymm2, 10001b": {
-      "ExpectedInstructionCount": -1,
-      "Skip": "Yes",
+      "ExpectedInstructionCount": 1,
       "Comment": [
         "Map 3 0b01 0x44 256-bit"
+      ],
+      "ExpectedArm64ASM": [
+        "pmullt z16.q, z17.d, z18.d"
       ]
     },
     "vperm2i128 ymm0, ymm1, ymm2, 00000000b": {
@@ -4305,13 +3926,12 @@
       ]
     },
     "vblendvps ymm0, ymm1, ymm2, ymm3": {
-      "ExpectedInstructionCount": 5,
+      "ExpectedInstructionCount": 4,
       "Comment": [
         "Map 3 0b01 0x4a 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "movprfx z2, z19",
-        "asr z2.s, p7/m, z2.s, #31",
+        "asr z2.s, z19.s, #31",
         "movprfx z0, z18",
         "bsl z0.d, z0.d, z17.d, z2.d",
         "mov z16.d, z0.d"
@@ -4329,13 +3949,12 @@
       ]
     },
     "vblendvpd ymm0, ymm1, ymm2, ymm3": {
-      "ExpectedInstructionCount": 5,
+      "ExpectedInstructionCount": 4,
       "Comment": [
         "Map 3 0b01 0x4b 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "movprfx z2, z19",
-        "asr z2.d, p7/m, z2.d, #63",
+        "asr z2.d, z19.d, #63",
         "movprfx z0, z18",
         "bsl z0.d, z0.d, z17.d, z2.d",
         "mov z16.d, z0.d"
@@ -4353,13 +3972,12 @@
       ]
     },
     "vpblendvb ymm0, ymm1, ymm2, ymm3": {
-      "ExpectedInstructionCount": 5,
+      "ExpectedInstructionCount": 4,
       "Comment": [
         "Map 3 0b01 0x4c 256-bit"
       ],
       "ExpectedArm64ASM": [
-        "movprfx z2, z19",
-        "asr z2.b, p7/m, z2.b, #7",
+        "asr z2.b, z19.b, #7",
         "movprfx z0, z18",
         "bsl z0.d, z0.d, z17.d, z2.d",
         "mov z16.d, z0.d"
@@ -4581,7 +4199,7 @@
         "Map 3 0b01 0xdf 128-bit"
       ],
       "ExpectedArm64ASM": [
-        "ldr q2, [x28, #3296]",
+        "ldr q2, [x28, #3072]",
         "movi v3.2d, #0x0",
         "mov v16.16b, v17.16b",
         "aese v16.16b, v3.16b",
@@ -4594,7 +4212,7 @@
         "Map 3 0b01 0xdf 128-bit"
       ],
       "ExpectedArm64ASM": [
-        "ldr q2, [x28, #3296]",
+        "ldr q2, [x28, #3072]",
         "movi v3.2d, #0x0",
         "mov v16.16b, v17.16b",
         "aese v16.16b, v3.16b",

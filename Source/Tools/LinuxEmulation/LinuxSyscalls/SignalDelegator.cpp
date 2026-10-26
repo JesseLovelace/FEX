@@ -64,16 +64,10 @@ static void SignalHandlerThunk(int Signal, siginfo_t* Info, void* UContext) {
   ThreadObject->SignalInfo.Delegator->HandleSignal(ThreadObject, Signal, Info, UContext);
 }
 
-uint64_t SigIsMember(GuestSAMask* Set, int Signal) {
+static uint64_t SigIsMember(GuestSAMask* Set, int Signal) {
   // Signal 0 isn't real, so everything is offset by one inside the set
   Signal -= 1;
   return (Set->Val >> Signal) & 1;
-}
-
-uint64_t SetSignal(GuestSAMask* Set, int Signal) {
-  // Signal 0 isn't real, so everything is offset by one inside the set
-  Signal -= 1;
-  return Set->Val | (1ULL << Signal);
 }
 
 /**
@@ -105,7 +99,7 @@ void SignalDelegator::HandleSignal(FEX::HLE::ThreadStateObject* Thread, int Sign
 }
 
 void SignalDelegator::RegisterHostSignalHandler(int Signal, HostSignalDelegatorFunction Func, bool Required) {
-  SetHostSignalHandler(Signal, std::move(Func), Required);
+  SetHostSignalHandler(Signal, std::move(Func));
   FrontendRegisterHostSignalHandler(Signal, Required);
 }
 
@@ -122,7 +116,7 @@ void SignalDelegator::SpillSRA(FEXCore::Core::InternalThreadState* Thread, void*
     Thread->CurrentFrame->State.gregs[i] = ArchHelpers::Context::GetArmReg(ucontext, SRAIdxMap);
   }
 
-  if (SupportsAVX) {
+  if (SupportsAVX && SupportsSVE256) {
     // TODO: This doesn't save the upper 128-bits of the 256-bit registers.
     // This needs to be implemented still.
     for (size_t i = 0; i < Config.SRAFPRCount; i++) {
@@ -406,6 +400,20 @@ bool SignalDelegator::HandleDispatcherGuestSignal(FEXCore::Core::InternalThreadS
   // Set our state register to point to our guest thread data
   ArchHelpers::Context::SetState(ucontext, reinterpret_cast<uint64_t>(Frame));
 
+  if (GuestAction->sa_flags & SA_RESETHAND) {
+
+    {
+      // If SA_RESETHAND is set, then the signal handler is immediately reset to SIG_DFL.
+      std::lock_guard lk(GuestDelegatorMutex);
+      GuestAction->sigaction_handler.handler = SIG_DFL;
+    }
+
+    // If this signal is not required by FEX then we can fully uninstall the host handler as well.
+    if (HostHandlers[Signal].Required.load(std::memory_order_relaxed) != true) {
+      UninstallHostHandler(Signal);
+    }
+  }
+
   return true;
 }
 
@@ -582,7 +590,8 @@ bool SignalDelegator::HandleFrontendSIGSEGV(FEXCore::Core::InternalThreadState* 
   }
 
 #ifdef ARCHITECTURE_arm64
-  if (Signal == SIGSEGV && SigInfo.si_code == SEGV_ACCERR && SigInfo.si_addr >= reinterpret_cast<void*>(Thread->JITGuardPage) &&
+  if (Signal == SIGSEGV && SigInfo.si_code == SEGV_ACCERR && Thread->JITGuardPage &&
+      SigInfo.si_addr >= reinterpret_cast<void*>(Thread->JITGuardPage) &&
       SigInfo.si_addr < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE)) {
     FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(Thread->RestartJump, Thread->JITGuardOverflowArgument,
                                                     ArchHelpers::Context::GetArmGPRs(UContext), ArchHelpers::Context::GetArmFPRs(UContext),
@@ -590,6 +599,11 @@ bool SignalDelegator::HandleFrontendSIGSEGV(FEXCore::Core::InternalThreadState* 
     return true;
   }
 #endif
+
+  // If this fault is in the main thread stack guard region, we should try to grow the main thread stack.
+  if (SigInfo.si_code == SEGV_ACCERR && FEXCore::Allocator::TryGrowMainThreadStack(reinterpret_cast<uintptr_t>(SigInfo.si_addr))) {
+    return true;
+  }
 
   return false;
 }
@@ -877,10 +891,11 @@ void SignalDelegator::QueueSignal(pid_t tgid, pid_t tid, int Signal, siginfo_t* 
   }
 }
 
-SignalDelegator::SignalDelegator(FEXCore::Context::Context* _CTX, const std::string_view ApplicationName, bool SupportsAVX)
+SignalDelegator::SignalDelegator(FEXCore::Context::Context* _CTX, const std::string_view ApplicationName, bool SupportsAVX, bool SupportsSVE256)
   : CTX {_CTX}
   , ApplicationName {ApplicationName}
-  , SupportsAVX {SupportsAVX} {
+  , SupportsAVX {SupportsAVX}
+  , SupportsSVE256 {SupportsSVE256} {
   // Signal zero isn't real
   HostHandlers[0].Installed = true;
 
@@ -1082,7 +1097,7 @@ void SignalDelegator::RegisterHostSignalHandlerForGuest(int Signal, FEX::HLE::Ho
 }
 
 void SignalDelegator::RegisterFrontendHostSignalHandler(int Signal, HostSignalDelegatorFunction Func, bool Required) {
-  SetFrontendHostSignalHandler(Signal, std::move(Func), Required);
+  SetFrontendHostSignalHandler(Signal, std::move(Func));
   FrontendRegisterFrontendHostSignalHandler(Signal, Required);
 }
 
@@ -1219,7 +1234,7 @@ uint64_t SignalDelegator::GuestSigProcMask(FEX::HLE::ThreadStateObject* Thread, 
   // 3) Give old mask back
   auto OldSet = Thread->SignalInfo.CurrentSignalMask.Val;
 
-  if (!!set) {
+  if (set) {
     uint64_t IgnoredSignalsMask = ~((1ULL << (SIGKILL - 1)) | (1ULL << (SIGSTOP - 1)));
     if (how == SIG_BLOCK) {
       Thread->SignalInfo.CurrentSignalMask.Val |= *set & IgnoredSignalsMask;
@@ -1244,7 +1259,7 @@ uint64_t SignalDelegator::GuestSigProcMask(FEX::HLE::ThreadStateObject* Thread, 
     ::syscall(SYS_rt_sigprocmask, SIG_SETMASK, &HostMask, nullptr, 8);
   }
 
-  if (!!oldset) {
+  if (oldset) {
     *oldset = OldSet;
   }
 
@@ -1317,11 +1332,7 @@ uint64_t SignalDelegator::GuestSigSuspend(FEX::HLE::ThreadStateObject* Thread, u
 }
 
 uint64_t SignalDelegator::GuestSigTimedWait(uint64_t* set, siginfo_t* info, const struct timespec* timeout, size_t sigsetsize) {
-  if (sigsetsize > sizeof(uint64_t)) {
-    return -EINVAL;
-  }
-
-  uint64_t Result = ::syscall(SYS_rt_sigtimedwait, set, info, timeout);
+  uint64_t Result = ::syscall(SYS_rt_sigtimedwait, set, info, timeout, sigsetsize);
 
   return Result == -1 ? -errno : Result;
 }
@@ -1354,7 +1365,7 @@ uint64_t SignalDelegator::GuestSignalFD(int fd, const uint64_t* set, size_t sigs
 }
 
 fextl::unique_ptr<FEX::HLE::SignalDelegator>
-CreateSignalDelegator(FEXCore::Context::Context* CTX, const std::string_view ApplicationName, bool SupportsAVX) {
-  return fextl::make_unique<FEX::HLE::SignalDelegator>(CTX, ApplicationName, SupportsAVX);
+CreateSignalDelegator(FEXCore::Context::Context* CTX, const std::string_view ApplicationName, bool SupportsAVX, bool SupportsSVE256) {
+  return fextl::make_unique<FEX::HLE::SignalDelegator>(CTX, ApplicationName, SupportsAVX, SupportsSVE256);
 }
 } // namespace FEX::HLE

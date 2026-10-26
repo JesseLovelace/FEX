@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "FEXHeaderUtils/Syscalls.h"
 #include "Logger.h"
+#include "ProcessPipe.h"
 #include "SquashFS.h"
 
 #include <Common/AsyncNet.h>
@@ -31,7 +32,7 @@
 #include <xxhash.h>
 
 namespace FEXCore {
-inline bool operator<(const FEXCore::ExecutableFileInfo& a, const FEXCore::ExecutableFileInfo& b) noexcept {
+static bool operator<(const FEXCore::ExecutableFileInfo& a, const FEXCore::ExecutableFileInfo& b) noexcept {
   return a.FileId < b.FileId;
 }
 } // namespace FEXCore
@@ -45,19 +46,19 @@ struct std::hash<FEXCore::ExecutableFileInfo> {
 
 namespace ProcessPipe {
 constexpr int USER_PERMS = S_IRWXU | S_IRWXG | S_IRWXO;
-int ServerLockFD {-1};
-int WatchFD {-1};
-std::optional<fasio::tcp_acceptor> ServerAcceptor;
-std::optional<fasio::tcp_acceptor> ServerFSAcceptor;
-int NumClients = 0;
-time_t RequestTimeout {10};
-bool Foreground {false};
-std::vector<struct pollfd> PollFDs {};
+static int ServerLockFD {-1};
+static int WatchFD {-1};
+static std::optional<fasio::tcp_acceptor> ServerAcceptor;
+static std::optional<fasio::tcp_acceptor> ServerFSAcceptor;
+static int NumClients = 0;
+static time_t RequestTimeout {10};
+static bool Foreground {false};
+static std::vector<struct pollfd> PollFDs {};
 
 // FD count watching
-constexpr size_t static MAX_FD_DISTANCE = 32;
-rlimit MaxFDs {};
-std::atomic<size_t> NumFilesOpened {};
+constexpr size_t MAX_FD_DISTANCE = 32;
+static rlimit MaxFDs {};
+static std::atomic<size_t> NumFilesOpened {};
 
 // Path to directory for unprocessed code maps dumped by FEX
 static std::string NewCodeMapDirectory;
@@ -72,14 +73,14 @@ void SetWatchFD(int FD) {
   WatchFD = FD;
 }
 
-size_t GetNumFilesOpen() {
+static size_t GetNumFilesOpen() {
   // Walk /proc/self/fd/ to see how many open files we currently have
   const std::filesystem::path self {"/proc/self/fd/"};
 
   return std::distance(std::filesystem::directory_iterator {self}, std::filesystem::directory_iterator {});
 }
 
-void GetMaxFDs() {
+static void GetMaxFDs() {
   // Get our kernel limit for the number of open files
   if (getrlimit(RLIMIT_NOFILE, &MaxFDs) != 0) {
     fprintf(stderr, "[FEXMountDaemon] getrlimit(RLIMIT_NOFILE) returned error %d %s\n", errno, strerror(errno));
@@ -89,7 +90,7 @@ void GetMaxFDs() {
   NumFilesOpened = GetNumFilesOpen();
 }
 
-void CheckRaiseFDLimit() {
+static void CheckRaiseFDLimit() {
   if (NumFilesOpened < (MaxFDs.rlim_cur - MAX_FD_DISTANCE)) {
     // No need to raise the limit.
     return;
@@ -221,7 +222,7 @@ bool InitializeServerPipe() {
 
 static fasio::poll_reactor Reactor;
 
-void HandleSocketData(fasio::tcp_socket&);
+static void HandleSocketData(fasio::tcp_socket&);
 
 bool InitializeServerSocket(bool abstract) {
   fextl::string ServerSocketName;
@@ -281,7 +282,7 @@ bool InitializeServerSocket(bool abstract) {
   return true;
 }
 
-void SendEmptyErrorPacket(fasio::tcp_socket& Socket) {
+static void SendEmptyErrorPacket(fasio::tcp_socket& Socket) {
   FEXServerClient::FEXServerResultPacket Res {
     .Header {
       .Type = FEXServerClient::PacketType::TYPE_ERROR,
@@ -293,7 +294,7 @@ void SendEmptyErrorPacket(fasio::tcp_socket& Socket) {
   write(Socket, Data, ec);
 }
 
-void SendFDSuccessPacket(fasio::tcp_socket& Socket, int FD) {
+static void SendFDSuccessPacket(fasio::tcp_socket& Socket, int FD) {
   FEXServerClient::FEXServerResultPacket Res {
     .Header {
       .Type = FEXServerClient::PacketType::TYPE_SUCCESS,
@@ -307,7 +308,7 @@ void SendFDSuccessPacket(fasio::tcp_socket& Socket, int FD) {
 
 // Discovers any pending code maps, parses their contents into a runtime data structure, and deletes them
 static std::map<FEXCore::ExecutableFileInfo, fextl::set<uintptr_t>>
-ImportPendingCodeMaps(const FEXCore::ExecutableFileInfo& MainFileId, bool HasMultiblock) {
+ImportPendingCodeMaps(const FEXCore::ExecutableFileInfo& MainFileId, bool HasMultiblock, std::optional<int>& ExecutableBitness) {
   // Detect code maps by checking file name suffixes by counting up an index.
   // Code maps that are ready for reading must be non-empty and flock(FLOCK_EX) must succeed:
   // - If empty, we tried generating the cache before the client could even lock it
@@ -334,7 +335,7 @@ ImportPendingCodeMaps(const FEXCore::ExecutableFileInfo& MainFileId, bool HasMul
       fmt::print("Found code map {}, queuing for merge\n", CodeMap);
     }
     close(FD);
-    CodeMaps.push_back(CodeMap);
+    CodeMaps.push_back(std::move(CodeMap));
   }
 
   // Update merged code map
@@ -348,6 +349,11 @@ ImportPendingCodeMaps(const FEXCore::ExecutableFileInfo& MainFileId, bool HasMul
       for (auto& [FileId, Contents] : NewBlocks) {
         ImportedCodeMaps.emplace(std::piecewise_construct, std::forward_as_tuple(nullptr, FileId, std::move(Contents.Filename)),
                                  std::forward_as_tuple(std::move(Contents.Blocks)));
+        if (FileId == MainFileId.FileId) {
+          LOGMAN_THROW_A_FMT(Contents.ExecutableBitness && (!ExecutableBitness.has_value() || ExecutableBitness == Contents.ExecutableBitness),
+                             "Inconsistent executable bitness");
+          ExecutableBitness = Contents.ExecutableBitness;
+        }
       }
     }
   }
@@ -365,7 +371,7 @@ ImportPendingCodeMaps(const FEXCore::ExecutableFileInfo& MainFileId, bool HasMul
  * Writes aggregated code map data into a single code map file that is ready to be used for cache generation
  */
 static void WriteNewCodeMap(const FEXCore::ExecutableFileInfo& File, const std::string& OutputName, const fextl::set<uintptr_t>& Blocks,
-                            bool IsMainFile, const auto& Dependencies) {
+                            std::optional<int> ExecutableBitness, const auto& Dependencies) {
   fmt::print("Writing {} blocks to {}\n", Blocks.size(), OutputName);
 
   struct CodeMapOpener : FEXCore::CodeMapOpener {
@@ -382,9 +388,9 @@ static void WriteNewCodeMap(const FEXCore::ExecutableFileInfo& File, const std::
 
   CodeMapOpener CodeMapOpener(OutputName);
   FEXCore::CodeMapWriter OutputCodeMap(CodeMapOpener, true);
-  if (IsMainFile) {
+  if (ExecutableBitness) {
     // List the main executable and all used libraries
-    OutputCodeMap.AppendSetMainExecutable(File);
+    OutputCodeMap.AppendSetMainExecutable(File, ExecutableBitness == 64);
 
     for (auto& [Dependency, _] : Dependencies) {
       OutputCodeMap.AppendLibraryLoad(Dependency);
@@ -426,11 +432,13 @@ static std::map<FEXCore::ExecutableFileInfo, NeedsCacheRefresh> AggregateCodeMap
   }
 
   // Accumulate information from new code maps
-  auto IncomingCodeMap = ImportPendingCodeMaps(MainFileId, HasMultiblock);
+  std::optional<int> ExecutableBitness;
+  auto IncomingCodeMap = ImportPendingCodeMaps(MainFileId, HasMultiblock, ExecutableBitness);
   for (auto& [File, _] : IncomingCodeMap) {
     Result.emplace(std::piecewise_construct, std::forward_as_tuple(nullptr, File.FileId, File.Filename),
                    std::forward_as_tuple(NeedsCacheRefresh::No));
   }
+  LOGMAN_THROW_A_FMT(ExecutableBitness, "New code maps did not contain executable marker");
 
   // For each referenced library, add referenced offsets to that library's reference code map
   for (auto& [File, Blocks] : IncomingCodeMap) {
@@ -452,14 +460,14 @@ static std::map<FEXCore::ExecutableFileInfo, NeedsCacheRefresh> AggregateCodeMap
 
     // Update code map and queue for cache generation
     std::map<FEXCore::ExecutableFileInfo, NeedsCacheRefresh> Empty;
-    WriteNewCodeMap(File, OutputName, Blocks, true, File.FileId == MainFileId.FileId ? Result : Empty);
+    WriteNewCodeMap(File, OutputName, Blocks, ExecutableBitness, File.FileId == MainFileId.FileId ? Result : Empty);
     Result.at(File) = NeedsCacheRefresh::Yes;
   }
 
   return Result;
 }
 
-int32_t EmbedSubprocess(const char* path, char* const* args) {
+static int32_t EmbedSubprocess(const char* path, char* const* args) {
   pid_t pid = fork();
   if (pid == 0) {
     execvp(path, args);
@@ -484,7 +492,7 @@ static int RunOfflineCompiler(const char* CodeMap) {
   return EmbedSubprocess(OfflineCompilerPath.c_str(), const_cast<char* const*>(&ExecveArgs[0]));
 };
 
-void HandleSocketData(fasio::tcp_socket& Socket) {
+static void HandleSocketData(fasio::tcp_socket& Socket) {
   std::vector<uint8_t> Data(1500);
 
   // Get the current number of FDs of the process before we start handling sockets.
@@ -719,7 +727,7 @@ void HandleSocketData(fasio::tcp_socket& Socket) {
   }
 }
 
-void CloseConnections() {
+static void CloseConnections() {
   // Close the server pipe so new processes will know to spin up a new FEXServer.
   // This one is closing
   close(ServerLockFD);

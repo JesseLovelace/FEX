@@ -52,19 +52,24 @@ static std::unique_ptr<FEX::Windows::OvercommitTracker> OvercommitTracker;
 static FEXCore::Core::InternalThreadState* Thread = nullptr;
 
 #ifdef _WIN32
+#ifdef _M_ARM64EC
+const bool Is64BitCompiler = true;
+#else
+const bool Is64BitCompiler = false;
+#endif
+#endif
+
+#ifdef _WIN32
 class AOTSyscallHandler : public FEXCore::HLE::SyscallHandler {
 #else
 class AOTSyscallHandler : public FEXCore::HLE::SyscallHandler, public FEX::HLE::SyscallMmapInterface {
 #endif
 public:
-  AOTSyscallHandler(FEXCore::Context::Context& CTX, FEXCore::HLE::SyscallOSABI SyscallOSABI)
-    : CTX(CTX) {
-    OSABI = SyscallOSABI;
-  }
+  AOTSyscallHandler(FEXCore::Context::Context& CTX)
+    : CTX(CTX) {}
 
-  uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) override {
+  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
     // Don't do anything
-    return 0;
   }
 
   FEXCore::Context::Context& CTX;
@@ -128,6 +133,7 @@ public:
 #endif
 };
 
+#ifndef _WIN32
 static void MsgHandler(LogMan::DebugLevels Level, const char* Message) {
   fmt::print("[{}] {}\n", LogMan::DebugLevelStr(Level), Message);
 }
@@ -135,6 +141,7 @@ static void MsgHandler(LogMan::DebugLevels Level, const char* Message) {
 static void AssertHandler(const char* Message) {
   fmt::print("[A] {}\n", Message);
 }
+#endif
 
 namespace FEXCore {
 inline bool operator<(const ExecutableFileInfo& a, const ExecutableFileInfo& b) noexcept {
@@ -163,7 +170,7 @@ static constexpr size_t DefaultCS {4};
 #endif
 
 static FEXCore::Core::InternalThreadState* SetupCompileThread(FEXCore::Context::Context& CTX, bool Is64Bit) {
-  auto Thread = CTX.CreateThread(0, 0);
+  auto Thread = CTX.CreateThread();
 
   auto Frame = Thread->CurrentFrame;
   Frame->State.segment_arrays[FEXCore::Core::CPUState::SEGMENT_ARRAY_INDEX_GDT] = &gdt[0];
@@ -396,21 +403,19 @@ static std::optional<std::string> GenerateSingleCache(FEXCore::ExecutableFileInf
     return std::nullopt;
   }
   const bool Is64Bit = Loader.Is64BitMode();
-#elif defined(_M_ARM64EC)
-  const bool Is64Bit = true;
 #else
-  const bool Is64Bit = false;
+  const bool Is64Bit = Is64BitCompiler;
 #endif
   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, Is64Bit ? "1" : "0");
 
   // Load HostFeatures
 #ifndef _WIN32
-  auto HostFeatures = FEX::FetchHostFeatures();
+  auto HostFeatures = FEX::FetchHostFeatures(Is64Bit);
 #else
-  const auto NtDll = GetModuleHandle("ntdll.dll");
+  const auto NtDll = GetModuleHandleW(L"ntdll.dll");
   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
   auto HostFeatures = FEX::Windows::CPUFeatures::FetchHostFeatures(
-    IsWine, Is64Bit ? FEXCore::HostFeatures::HostTypeEnum::Arm64ec : FEXCore::HostFeatures::HostTypeEnum::Wow64);
+    IsWine, Is64Bit ? FEXCore::HostFeatures::HostTypeEnum::Arm64ec : FEXCore::HostFeatures::HostTypeEnum::Wow64, 0);
 #endif
 
   auto CTX = FEXCore::Context::Context::CreateNewContext(HostFeatures);
@@ -419,8 +424,7 @@ static std::optional<std::string> GenerateSingleCache(FEXCore::ExecutableFileInf
 #ifdef _WIN32
   OvercommitTracker = std::make_unique<FEX::Windows::OvercommitTracker>(IsWine);
 
-  auto SyscallOSABI = Is64Bit ? FEXCore::HLE::SyscallOSABI::OS_LINUX64 : FEXCore::HLE::SyscallOSABI::OS_LINUX32;
-  auto SyscallHandler = std::make_unique<AOTSyscallHandler>(*CTX, SyscallOSABI);
+  auto SyscallHandler = std::make_unique<AOTSyscallHandler>(*CTX);
 
   SyscallHandler->VAFileStart =
     TryMapImage(SyscallHandler->InvalidationTracker, SyscallHandler->ImageTracker, Binary.FileId, Binary).value_or(0);
@@ -433,8 +437,7 @@ static std::optional<std::string> GenerateSingleCache(FEXCore::ExecutableFileInf
 #else
   Loader.CalculateHWCaps(CTX.get());
 
-  auto SyscallOSABI = Is64Bit ? FEXCore::HLE::SyscallOSABI::OS_LINUX64 : FEXCore::HLE::SyscallOSABI::OS_LINUX32;
-  auto SyscallHandler = std::make_unique<AOTSyscallHandler>(*CTX, SyscallOSABI);
+  auto SyscallHandler = std::make_unique<AOTSyscallHandler>(*CTX);
 
   // Populate relocations from ELF file
   {
@@ -572,7 +575,7 @@ static int GenerateCache(int argc, const char** argv) {
     }
 
     for (auto& [FileId, Contents] : Parsed) {
-      if (!ExplicitFileId && (Contents.IsExecutable || Parsed.size() == 1)) {
+      if (!ExplicitFileId && (Contents.ExecutableBitness || Parsed.size() == 1)) {
         ProgramName.FileId = FileId;
         ProgramName.Filename = Contents.Filename;
       }
@@ -621,7 +624,7 @@ static int GenerateCache(int argc, const char** argv) {
  * Writes aggregated code map data into a single code map file that is ready to be used for cache generation
  */
 static void WriteNewCodeMap(const FEXCore::ExecutableFileInfo& File, const std::string& OutputName, const fextl::set<uintptr_t>& Blocks,
-                            bool IsExecutable, const std::set<FEXCore::ExecutableFileInfo>& Dependencies) {
+                            std::optional<int> ExecutableBitness, const std::set<FEXCore::ExecutableFileInfo>& Dependencies) {
   fmt::print("Writing {} blocks to {}\n", Blocks.size(), OutputName);
 
   struct CodeMapOpener : FEXCore::CodeMapOpener {
@@ -638,9 +641,9 @@ static void WriteNewCodeMap(const FEXCore::ExecutableFileInfo& File, const std::
 
   CodeMapOpener CodeMapOpener(OutputName);
   FEXCore::CodeMapWriter OutputCodeMap(CodeMapOpener, true);
-  if (IsExecutable) {
+  if (ExecutableBitness) {
     // List the main executable and all used libraries
-    OutputCodeMap.AppendSetMainExecutable(File);
+    OutputCodeMap.AppendSetMainExecutable(File, ExecutableBitness == 64);
 
     for (auto& Dependency : Dependencies) {
       OutputCodeMap.AppendLibraryLoad(Dependency);
@@ -658,7 +661,7 @@ static void WriteNewCodeMap(const FEXCore::ExecutableFileInfo& File, const std::
 struct ParsedContentsAndDependencies {
   fextl::string Filename;
   fextl::set<uint64_t> Blocks;
-  bool IsExecutable = false;
+  std::optional<int> ExecutableBitness;
   std::set<FEXCore::CodeMapFileId> Dependencies;
 };
 
@@ -688,13 +691,13 @@ static std::map<FEXCore::CodeMapFileId, ParsedContentsAndDependencies> ImportPen
     std::set<FEXCore::CodeMapFileId> Dependencies;
     std::optional<FEXCore::CodeMapFileId> ExecutableFileId;
     for (auto& [FileId, Contents] : FEXCore::CodeMap::ParseCodeMap(Incoming)) {
-      auto& [Filename, Blocks, IsExecutable, _] =
+      auto& [Filename, Blocks, ExecutableBitness, _] =
         Result.emplace(std::piecewise_construct, std::forward_as_tuple(FileId), std::tuple {}).first->second;
       Filename = std::move(Contents.Filename);
       Blocks.merge(std::move(Contents.Blocks));
-      IsExecutable = Contents.IsExecutable;
-      if (IsExecutable) {
-        LOGMAN_THROW_A_FMT(!ExecutableFileId, "Expected a unique executable identifiers per code map");
+      ExecutableBitness = Contents.ExecutableBitness;
+      if (ExecutableBitness) {
+        LOGMAN_THROW_A_FMT(!ExecutableFileId, "Expected a unique executable identifier per code map");
         ExecutableFileId = FileId;
       } else {
         Dependencies.insert(FileId);
@@ -745,7 +748,7 @@ static void AggregateCodeMaps(const std::string& NewCodeMapDirectory, const std:
     for (auto& Dependency : Contents.Dependencies) {
       Dependencies.emplace(nullptr, Dependency, IncomingCodeMap.at(Dependency).Filename);
     }
-    WriteNewCodeMap(File, OutputName, Contents.Blocks, Contents.IsExecutable, Dependencies);
+    WriteNewCodeMap(File, OutputName, Contents.Blocks, Contents.ExecutableBitness, Dependencies);
   }
 }
 
@@ -767,11 +770,21 @@ static int ProcessAll() {
   for (auto& Entry : std::filesystem::directory_iterator(ReadyCodeMapDirectory)) {
     std::ifstream CodeMap(Entry.path(), std::ios_base::binary);
     auto Parsed = FEXCore::CodeMap::ParseCodeMap(CodeMap);
-    auto ExecutableIt = std::ranges::find_if(Parsed, [](const auto& Entry) { return Entry.second.IsExecutable; });
+    auto ExecutableIt = std::ranges::find_if(Parsed, [](const auto& Entry) { return Entry.second.ExecutableBitness.has_value(); });
     if (ExecutableIt == Parsed.end()) {
       // Skip libraries; they're only processed as dependencies of a main executable
       continue;
     }
+
+#ifdef _WIN32
+    // For WoA, spawn a subprocess for each cache generation run.
+    // This ensures robustness and allows for switching FEXOfflineCompiler between WoW64 and ARM64EC.
+    char SelfPathRaw[PATH_MAX];
+    GetModuleFileNameA(nullptr, SelfPathRaw, sizeof(SelfPathRaw));
+    std::string SelfPath = SelfPathRaw;
+    auto NewExecName = fmt::format("FEXOfflineCompiler{}.exe", ExecutableIt->second.ExecutableBitness.value());
+    SelfPath.replace(SelfPath.size() - NewExecName.size(), NewExecName.size(), NewExecName);
+#endif
 
     fmt::println("\nChecking caches for executable {}", ExecutableIt->second.Filename);
 
@@ -808,9 +821,18 @@ static int ProcessAll() {
       std::vector<const char*> GenerateArgs {
         "generate", "--fileid", FileIdArg.c_str(), "--outdir", OutDir.c_str(), MergedCodeMapFilename.c_str(),
       };
+#ifndef _WIN32
       if (GenerateCache(GenerateArgs.size(), GenerateArgs.data()) != 0) {
         fmt::println("ERROR: Cache generation failed for {}", BinaryName);
       }
+#else
+      GenerateArgs.insert(GenerateArgs.begin(), SelfPath.c_str());
+      GenerateArgs.push_back(nullptr);
+      auto Status = _spawnv(_P_WAIT, SelfPath.c_str(), GenerateArgs.data());
+      if (Status) {
+        fmt::println("ERROR: Cache generation failed for {}", BinaryName);
+      }
+#endif
     }
   }
 

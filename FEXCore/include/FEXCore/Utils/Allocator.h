@@ -12,7 +12,7 @@ struct InternalThreadState;
 }
 
 namespace FEXCore::Allocator {
-FEX_DEFAULT_VISIBILITY size_t DetermineVASize();
+FEX_DEFAULT_VISIBILITY size_t GetHostVABits();
 
 #ifdef GLIBC_ALLOCATOR_FAULT
 // Glibc hooks should only fault once we are in main.
@@ -79,5 +79,6 @@ FEX_DEFAULT_VISIBILITY fextl::vector<MemoryRegion> Setup48BitAllocatorIfExists(s
 #ifndef _WIN32
 FEX_DEFAULT_VISIBILITY void RegisterTLSData(FEXCore::Core::InternalThreadState* Thread);
 FEX_DEFAULT_VISIBILITY void UninstallTLSData(FEXCore::Core::InternalThreadState* Thread);
+FEX_DEFAULT_VISIBILITY bool TryGrowMainThreadStack(uintptr_t FaultAddress);
 #endif
 } // namespace FEXCore::Allocator

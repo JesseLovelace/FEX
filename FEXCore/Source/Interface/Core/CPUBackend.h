@@ -8,6 +8,8 @@ $end_info$
 
 #pragma once
 
+#include "Interface/Core/SharedCodeBufferManager.h"
+
 #include <FEXCore/Utils/CompilerDefs.h>
 #include <FEXCore/Utils/SignalScopeGuards.h>
 #include <FEXCore/fextl/memory.h>
@@ -16,10 +18,14 @@ $end_info$
 #include <FEXCore/fextl/map.h>
 
 #include <cstdint>
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
 #include <atomic>
 #include <mutex>
 #endif
+=======
+#include <span>
+>>>>>>> upstream/main
 
 namespace FEXCore::CPU {
 union Relocation;
@@ -45,6 +51,7 @@ namespace CodeSerialize {
 struct GuestToHostMap;
 
 namespace CPU {
+<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   // ml460 (#75): monotonically increasing CodeBuffer generation number,
   // bumped on every AllocateNew. Drives the deferred pool-tail sweep.
@@ -113,10 +120,12 @@ namespace CPU {
     fextl::shared_ptr<CodeBuffer> AllocateNew(size_t Size);
   };
 
+=======
+>>>>>>> upstream/main
   class CPUBackend {
   public:
 
-    CPUBackend(CodeBufferManager&, FEXCore::Core::InternalThreadState*);
+    CPUBackend(SharedCodeBufferManager&, FEXCore::Core::InternalThreadState*);
 
     virtual ~CPUBackend();
 
@@ -126,6 +135,8 @@ namespace CPU {
       fextl::map<uint64_t, uint8_t*> EntryPoints;
       // The total size of the codeblock from [BlockBegin, BlockBegin+Size).
       size_t Size;
+      // Offset of BlockBegin from the start of the CodeBuffer it lives in
+      uint64_t HostCodeOffset;
     };
 
     // Header that can live at the start of a JIT block.
@@ -185,6 +196,10 @@ namespace CPU {
     virtual CompiledCode CompileCode(uint64_t Entry, uint64_t Size, bool SingleInst, const FEXCore::IR::IRListView* IR,
                                      FEXCore::Core::DebugData* DebugData, bool CheckTF) = 0;
 
+    virtual CompiledCode LoadCachedCode(std::span<const uint8_t> HostBytes) {
+      return {};
+    }
+
     virtual fextl::vector<FEXCore::CPU::Relocation> TakeRelocations(uint64_t GuestBaseAddress) = 0;
 
     virtual void ClearCache() {}
@@ -232,8 +247,9 @@ namespace CPU {
 
     FEXCore::Core::InternalThreadState* ThreadState;
 
+    // Acquires a new shared code buffer, setting `CurrentCodeBuffer` and returning a pointer to it.
     [[nodiscard]]
-    CodeBuffer* GetEmptyCodeBuffer();
+    CodeBuffer* AcquireNewSharedCodeBuffer();
 
     // This is the code buffer containing the main code under execution by this thread.
     // CheckCodeBufferUpdate must be used before compiling new code.
@@ -242,7 +258,7 @@ namespace CPU {
     // Old CodeBuffer generations required to be valid until returning from signal handlers
     fextl::vector<fextl::shared_ptr<CodeBuffer>> SignalHandlerCodeBuffers;
 
-    CodeBufferManager& CodeBuffers;
+    SharedCodeBufferManager& SharedCodeBuffers;
 
   private:
     void RegisterForSignalHandler(fextl::shared_ptr<CodeBuffer>);

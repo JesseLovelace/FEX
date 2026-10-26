@@ -211,7 +211,8 @@ inline bool VirtualProtect(void* Ptr, size_t Size, ProtectOptions options) {
     LOGMAN_MSG_A_FMT("Unknown VirtualProtect options combination");
   }
 
-  return ::VirtualProtect(Ptr, Size, prot, nullptr) == 0;
+  DWORD OldProt {};
+  return ::VirtualProtect(Ptr, Size, prot, &OldProt) != 0;
 }
 
 FEX_DEFAULT_VISIBILITY extern VirtualNamePtr VirtualName;
@@ -318,6 +319,8 @@ FEX_DEFAULT_VISIBILITY extern void InitializeThread();
 
 #ifndef _WIN32
 void SetupAllocatorHooks(void* (*)(void* addr, size_t length, int prot, int flags, int fd, off_t offset), int (*)(void* addr, size_t length));
+#else
+void SetupAllocatorHooks(void (*)(const char* name, const void* address, size_t size));
 #endif
 
 struct FEXAllocOperators {
