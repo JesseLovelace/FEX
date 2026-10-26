@@ -13,6 +13,9 @@ $end_info$
 #include <FEXCore/Utils/TypeDefines.h>
 
 #include <cstddef>
+#ifdef FEX_IOS_HOST
+#include <mutex>
+#endif
 #include <cstdint>
 
 namespace FEXCore {
@@ -127,6 +130,12 @@ public:
   fextl::shared_ptr<CodeBuffer> StartMaximalCodeBuffer();
 
   virtual void OnCodeBufferAllocated(const std::shared_ptr<CodeBuffer>&) {};
+
+#ifdef FEX_IOS_HOST
+  // iOS-Madeira ml460 (#75): the pool-tail sweeper reads Latest from another thread, racing
+  // AllocateNew's assignment; both go through this leaf mutex (never held around another lock).
+  std::mutex LatestMutex;
+#endif
 
 private:
   fextl::shared_ptr<CodeBuffer> Latest;

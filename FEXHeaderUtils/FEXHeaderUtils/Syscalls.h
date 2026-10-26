@@ -11,6 +11,7 @@
 #include <syscall.h>
 #elif defined(__APPLE__)
 #include <pthread.h>
+#include <sys/random.h>
 #else
 #include <processthreadsapi.h>
 #endif
@@ -121,6 +122,14 @@ inline int32_t gettid() {
 
 inline int32_t tgkill(pid_t tgid, pid_t tid, int sig) {
   return pthread_kill(pthread_self(), sig);
+}
+
+inline ssize_t getrandom(void* buf, size_t buflen, unsigned int) {
+  // getentropy() is limited to 256 bytes per call.
+  if (buflen > 256 || getentropy(buf, buflen) != 0) {
+    return -1;
+  }
+  return static_cast<ssize_t>(buflen);
 }
 #else
 

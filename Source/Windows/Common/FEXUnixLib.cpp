@@ -112,7 +112,6 @@ bool Available() {
 }
 
 bool TryEnableHardwareTSO() {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   // iOS: FEX-2607's FEXUnixLib funcs table isn't registered on the iOS unix
   // side, and the legacy Illegal:: paths issue raw Linux syscalls (unsafe on
@@ -120,17 +119,8 @@ bool TryEnableHardwareTSO() {
   // correct (our hand-rolled HostFeatures doesn't advertise hardware TSO).
   return false;
 #endif
-  if (UnixLibAvailable()) {
-    // UnixLib path.
-    FEXUnixLib_SetHardwareTSOControlArgs Args {
-      .Enable = true,
-    };
-
-    return Call(FEXUnixLibFunctions::SetHardwareTSOControl, &Args) == STATUS_SUCCESS;
-=======
   if (!Available()) {
     return false;
->>>>>>> upstream/main
   }
 
   FEXUnixLib_SetHardwareTSOControlArgs Args {
@@ -141,22 +131,12 @@ bool TryEnableHardwareTSO() {
 }
 
 bool SetKernelUnalignedAtomicControl(uint64_t Flags) {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   (void)Flags;
   return false;
 #endif
-  if (UnixLibAvailable()) {
-    // UnixLib path.
-    FEXUnixLib_SetKernelUnalignedAtomicControl Args {
-      .Flags = Flags,
-    };
-
-    return Call(FEXUnixLibFunctions::SetKernelUnalignedAtomicControl, &Args) == STATUS_SUCCESS;
-=======
   if (!Available()) {
     return false;
->>>>>>> upstream/main
   }
 
   FEXUnixLib_SetKernelUnalignedAtomicControl Args {
@@ -167,25 +147,13 @@ bool SetKernelUnalignedAtomicControl(uint64_t Flags) {
 }
 
 void VirtualTHPControl(const void* Ptr, size_t Size, FEXCore::Allocator::THPControl Control) {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   (void)Ptr;
   (void)Size;
   (void)Control;
   return;
 #endif
-  if (UnixLibAvailable()) {
-    // UnixLib path.
-    FEXUnixLib_Madvise Args {
-      .Addr = Ptr,
-      .Size = Size,
-      .Advise = Control == FEXCore::Allocator::THPControl::Disable ? MADV_NOHUGEPAGE : MADV_HUGEPAGE,
-    };
-
-    Call(FEXUnixLibFunctions::Madvise, &Args);
-=======
   if (!Available()) {
->>>>>>> upstream/main
     return;
   }
 
@@ -199,7 +167,6 @@ void VirtualTHPControl(const void* Ptr, size_t Size, FEXCore::Allocator::THPCont
 }
 
 void VirtualName(const char* Name, const void* Ptr, size_t Size) {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml294 (task #51): PUBLISH FEX'S OWN NAME FOR EVERY HOST ALLOCATION.
    *
@@ -229,10 +196,7 @@ void VirtualName(const char* Name, const void* Ptr, size_t Size) {
   }
   return;
 #endif
-  if (!SupportsVirtualName) {
-=======
   if (!SupportsVirtualName || !Available()) {
->>>>>>> upstream/main
     return;
   }
 
@@ -248,20 +212,12 @@ void VirtualName(const char* Name, const void* Ptr, size_t Size) {
 }
 
 SHMSlotResult AllocateSHMSlots(void* SHMBase, uint32_t MapSize, uint32_t MaxSize) {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   (void)SHMBase;
   (void)MapSize;
   (void)MaxSize;
   return {};
 #endif
-  if (UnixLibAvailable()) {
-    // UnixLib path.
-    FEXUnixLib_GetSHMStatsVMA Args {
-      .SHMBase = SHMBase,
-      .MapSize = MapSize,
-      .MaxSize = MaxSize,
-=======
   if (!Available()) {
     return {};
   }
@@ -276,7 +232,6 @@ SHMSlotResult AllocateSHMSlots(void* SHMBase, uint32_t MapSize, uint32_t MaxSize
     return {
       .SHMBase = Args.SHMBase,
       .MappedSize = Args.MapSize,
->>>>>>> upstream/main
     };
   }
 
@@ -284,16 +239,10 @@ SHMSlotResult AllocateSHMSlots(void* SHMBase, uint32_t MapSize, uint32_t MaxSize
 }
 
 void DeleteSHMStatsFile() {
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   return;
 #endif
-  if (UnixLibAvailable()) {
-    // UnixLib path.
-    Call(FEXUnixLibFunctions::DeleteSHMStatsFile, nullptr);
-=======
   if (!Available()) {
->>>>>>> upstream/main
     return;
   }
 
@@ -301,6 +250,12 @@ void DeleteSHMStatsFile() {
 }
 
 void* MapFile(HANDLE FileHandle, uint64_t MapSize) {
+#ifdef FEX_IOS_HOST
+  // iOS: the unix side registers no FEXUnixLib function table; callers fall back to reading.
+  (void)FileHandle;
+  (void)MapSize;
+  return nullptr;
+#endif
   if (Available() && WineServerHandleToFd) {
     FEXUnixLib_MapFile Args {
       .FD = -1,
@@ -322,6 +277,9 @@ void* MapFile(HANDLE FileHandle, uint64_t MapSize) {
 }
 
 uint32_t GetPID() {
+#ifdef FEX_IOS_HOST
+  return GetCurrentProcessId();
+#endif
   if (Available()) {
     FEXUnixLib_GetPID Args {};
     Call(FEXUnixLibFunctions::GetPID, &Args);

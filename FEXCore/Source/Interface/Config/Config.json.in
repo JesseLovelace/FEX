@@ -544,6 +544,7 @@
       "Guest32Base": {
         "Type": "uint64",
         "Default": "0",
+        "AffectsCodeGen": "true",
         "Feature": "GuestWindow",
         "Desc": [
           "Host address that guest address 0 maps to, for 32-bit guests only ('the guest window').",

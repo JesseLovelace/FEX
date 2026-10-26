@@ -479,6 +479,11 @@ bool ContextImpl::InitCore() {
   // Set up the SignalDelegator config since core is initialized.
   SignalDelegation->SetConfig(Dispatcher->MakeSignalDelegatorConfig());
 
+#if defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)
+  // MADEIRA (local fork): the WOW64 frontend keeps the fault-page suspend, not CHPEv2.
+  Config.NeedsPendingInterruptFaultCheck = true;
+#endif
+
   if (Config.GdbServer) {
     // If gdbserver is enabled then this needs to be enabled.
     Config.NeedsPendingInterruptFaultCheck = true;
@@ -518,12 +523,8 @@ void ContextImpl::InitializeCompiler(FEXCore::Core::InternalThreadState* Thread)
   Thread->LookupCache = fextl::make_unique<FEXCore::LookupCache>(this);
   LogMan::Msg::EFmt("[TI-IC] decoder");
   Thread->FrontendDecoder = fextl::make_unique<FEXCore::Frontend::Decoder>(Thread);
-<<<<<<< HEAD
-  Thread->PassManager = fextl::make_unique<FEXCore::IR::PassManager>();
-  LogMan::Msg::EFmt("[TI-IC] passmanager");
-=======
   Thread->PassManager = fextl::make_unique<FEXCore::IR::PassManager>(this);
->>>>>>> upstream/main
+  LogMan::Msg::EFmt("[TI-IC] passmanager");
 
   Thread->CurrentFrame->State.L1Pointer = Thread->LookupCache->GetL1Pointer();
   Thread->CurrentFrame->State.L1Mask = Thread->LookupCache->GetScaledL1PointerMask();
@@ -533,11 +534,7 @@ void ContextImpl::InitializeCompiler(FEXCore::Core::InternalThreadState* Thread)
   Dispatcher->InitThreadPointers(Thread);
 
   // Create CPU backend
-<<<<<<< HEAD
-  Thread->PassManager->InsertRegisterAllocationPass(this);
   LogMan::Msg::EFmt("[TI-IC] jitcore");
-=======
->>>>>>> upstream/main
   Thread->CPUBackend = FEXCore::CPU::CreateArm64JITCore(this, Thread);
   LogMan::Msg::EFmt("[TI-IC] jitcore-done");
 
@@ -546,9 +543,7 @@ void ContextImpl::InitializeCompiler(FEXCore::Core::InternalThreadState* Thread)
   Thread->PassManager->Finalize();
 }
 
-<<<<<<< HEAD
-FEXCore::Core::InternalThreadState*
-ContextImpl::CreateThread(uint64_t InitialRIP, uint64_t StackPointer, const FEXCore::Core::CPUState* NewThreadState) {
+FEXCore::Core::InternalThreadState* ContextImpl::CreateThread(const FEXCore::Core::CPUState* NewThreadState) {
   LogMan::Msg::EFmt("[TI-IC] createthread-enter");
 
   /* ml790: ALLOCATE, CHECK, THEN CONSTRUCT.
@@ -592,10 +587,6 @@ ContextImpl::CreateThread(uint64_t InitialRIP, uint64_t StackPointer, const FEXC
   /* ::new -- the class inherits its own operator new overloads, which hide the
    * global placement form. */
   FEXCore::Core::InternalThreadState* Thread = ::new (ThreadMem) FEXCore::Core::InternalThreadState {
-=======
-FEXCore::Core::InternalThreadState* ContextImpl::CreateThread(const FEXCore::Core::CPUState* NewThreadState) {
-  FEXCore::Core::InternalThreadState* Thread = new FEXCore::Core::InternalThreadState {
->>>>>>> upstream/main
     .CTX = this,
   };
   LogMan::Msg::EFmt("[TI-IC] threadstate-alloc");
@@ -922,36 +913,16 @@ ContextImpl::GenerateIR(FEXCore::Core::InternalThreadState* Thread, uint64_t Gue
   }
 
   if (!HasCustomIR) {
-<<<<<<< HEAD
-    const uint8_t* GuestCode {};
     // Guest window: instruction fetch reads from `GuestBase + RIP`. GuestRIP itself is passed on
     // unchanged - the block info, the LookupCache and every later consumer key on the guest address.
-    GuestCode = reinterpret_cast<const uint8_t*>(GetGuestBase() + GuestRIP);
-
-    /* perf-silenced GenerateIR GuestCode log */
-=======
-    const auto* GuestCode = reinterpret_cast<const uint8_t*>(GuestRIP);
->>>>>>> upstream/main
+    const auto* GuestCode = reinterpret_cast<const uint8_t*>(GetGuestBase() + GuestRIP);
 
     Thread->FrontendDecoder->DecodeLoop(GuestCode);
 
-<<<<<<< HEAD
-    /* perf-silenced */ // LogMan::Msg::IFmt("[iOS] GenerateIR: Calling DecodeInstructionsAtEntry...");
-    Thread->FrontendDecoder->DecodeInstructionsAtEntry(Thread, GuestCode, GuestRIP, MaxInst);
-    /* perf-silenced */ // LogMan::Msg::IFmt("[iOS] GenerateIR: DecodeInstructionsAtEntry returned");
-
-    auto BlockInfo = Thread->FrontendDecoder->GetDecodedBlockInfo();
-    auto CodeBlocks = &BlockInfo->Blocks;
-
-    /* perf-silenced GenerateIR Blocks log */
-
-    Thread->OpDispatcher->BeginFunction(GuestRIP, CodeBlocks, BlockInfo->TotalInstructionCount, BlockInfo->Is64BitMode,
-=======
     const auto* BlockInfo = Thread->FrontendDecoder->GetDecodedBlockInfo();
     const auto& CodeBlocks = BlockInfo->Blocks;
 
     Thread->OpDispatcher->BeginFunction(GuestRIP, &CodeBlocks, BlockInfo->TotalInstructionCount, BlockInfo->Is64BitMode,
->>>>>>> upstream/main
                                         AreMonoHacksActive() && MonoBackpatcherBlock.load(std::memory_order_relaxed) == GuestRIP);
 
     const auto GPRSize = Thread->OpDispatcher->GetGPROpSize();
@@ -2208,6 +2179,10 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
   std::optional<uint64_t> DiskCacheGuestCodeKey;
   {
     FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedDiskCacheLookupTime);
+#ifdef FEX_IOS_HOST
+    // ml455: a delivery compile publishes nothing, so it neither loads from nor stores to the disk cache.
+    if (!IosUnpublished)
+#endif
     Hit = DiskCache.Lookup(Thread, Region, GuestRIP, DiskCacheGuestCodeKey);
     if (Hit && !DiskCache.IsValidating()) {
       auto LoadedCode = Thread->CPUBackend->LoadCachedCode(Hit->HostCode);
@@ -2329,23 +2304,16 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
     }
   }
 
-<<<<<<< HEAD
-  // Clear any relocations that might have been generated
-  if (!CodeCache.IsGeneratingCache) {
-    Thread->CPUBackend->ClearRelocations();
-  }
-
 #ifdef FEX_IOS_HOST
-  /* ml455: delivery-mode block — return for one-shot execution WITHOUT any
-   * publication.  Guest-range registration, the lookup insert and the codemap
-   * all take locks an interrupted frame below may own. */
+  /* ml455: delivery-mode block -- return for one-shot execution WITHOUT any
+   * publication. Guest-range registration, the lookup insert, the disk cache
+   * and the codemap all take locks an interrupted frame below may own. */
   if (IosUnpublished) {
+    Thread->CPUBackend->ClearRelocations();
     return (uintptr_t)CodePtr;
   }
 #endif
 
-=======
->>>>>>> upstream/main
   fextl::vector<uint64_t> CodePages;
 
   if (NeedsAddGuestCodeRanges) {
@@ -2389,7 +2357,8 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
     Thread->CPUBackend->ClearRelocations();
   }
 
-<<<<<<< HEAD
+  Thread->FrontendDecoder->ValidateDisownedOrFree();
+  Thread->OpDispatcher->ValidateDisownedOrFree();
 #if defined(FEX_IOS_HOST) && defined(_WIN32)
   /* iOS-Madeira ml460 (#75): deferred pool-tail sweep. A generation swap makes
    * every parked thread's CurrentCodeBuffer ref a dead pin (ml459: 13 16MB
@@ -2402,10 +2371,6 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
     IosMaybeSweepCodeBuffers(Thread);
   }
 #endif
-=======
-  Thread->FrontendDecoder->ValidateDisownedOrFree();
-  Thread->OpDispatcher->ValidateDisownedOrFree();
->>>>>>> upstream/main
 
   return (uintptr_t)CodePtr;
 }

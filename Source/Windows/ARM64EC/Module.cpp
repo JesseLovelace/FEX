@@ -1011,7 +1011,6 @@ extern "C" const uint64_t IosGuestBranchTraceLayout[3] = {
 #endif
 
 NTSTATUS ProcessInit() {
-<<<<<<< HEAD
   /* iOS-Madeira: DualMap::WriteOffset (RX→RW alias distance) is set below,
    * after InitCRTProcess() populates the environment, and BEFORE InitCore().
    * It is read from MADEIRA_JIT_WRITE_OFFSET rather than hardcoded, because
@@ -1050,12 +1049,9 @@ NTSTATUS ProcessInit() {
   }
 #endif
 
-  InitSyscalls();
-=======
-  if (!InitSyscalls()) {
+    if (!InitSyscalls()) {
     return STATUS_NOT_SUPPORTED;
   }
->>>>>>> upstream/main
 
   FEX::Windows::InitCRTProcess();
   FEX::Windows::SetupThreadHandlers();
@@ -1909,7 +1905,6 @@ void BTCpu64NotifyReadFile(HANDLE Handle, void* Address, SIZE_T Size, BOOL After
     return;
   }
 
-<<<<<<< HEAD
   ThreadCreationMutex.lock();
   CTX->GetCodeInvalidationMutex().lock();
   if (InvalidationTracker->BeginUntrackedWriteLocked(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size))) {
@@ -1918,52 +1913,6 @@ void BTCpu64NotifyReadFile(HANDLE Handle, void* Address, SIZE_T Size, BOOL After
   } else {
     CTX->GetCodeInvalidationMutex().unlock();
     ThreadCreationMutex.unlock();
-=======
-  // On file read this can cause JIT code invalidations. FEX previously used to hold locks on `CodeInvalidationMutex` and `ThreadCreationMutex` during
-  // this. This was a problem that file reads are blocking and may necessarily never return. A simple unit-test that holds a blocking read, then tries
-  // to create threads or JIT code would immediately hang.
-  //
-  // - PhysX msiexec installer (From Dishonored AppID 205100) did exactly this and hung forever.
-  //
-  // The alternative approach is to let the read progress as normal and only notify invalidation when the read actually returns. This introduces an
-  // unavoidable race which by my logic is fine.
-  //
-  // 1) If a thread is already jitting code from the address range then in a "real" x86 environment it may see old, new, or a combination of both.
-  //   - NtReadFile isn't guaranteed to return new data atomically, in order, or anything of the sort.
-  // 2) The calling thread only ever sees the before code, and the after code because `NtReadFile` never leaves "kernel" space before invalidation.
-  //
-  // The only "gotcha" is that FEX could have write-protected the memory region when a JIT executed the code, and once the `NtReadFile` tries
-  // returning data, it faults. This requires coordination between Wine and FEX in order to handle this edge case.
-  //
-  // Additionally, async reads are still completely untracked with invalidation, which never worked before anyway.
-
-  if (AppConfigName == "P5R.exe") {
-    // Use the locking mechanism for (Persona 5 Royal AppID 1687950) which does exactly the problem described above.
-    auto& InLockedRWXRead = GetFrontendThreadData(ThreadState)->InLockedRWXRead;
-    if (!After) {
-      ThreadCreationMutex.lock();
-      CTX->GetCodeInvalidationMutex().lock();
-      if (InvalidationTracker->BeginUntrackedWriteLocked(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size))) {
-        InLockedRWXRead = true;
-      } else {
-        CTX->GetCodeInvalidationMutex().unlock();
-        ThreadCreationMutex.unlock();
-      }
-    } else {
-      if (InLockedRWXRead) {
-        InLockedRWXRead = false;
-        CTX->GetCodeInvalidationMutex().unlock();
-        ThreadCreationMutex.unlock();
-      }
-    }
-
-    return;
-  }
-
-  if (After && Status == STATUS_SUCCESS) {
-    std::scoped_lock Lock(ThreadCreationMutex);
-    InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), false);
->>>>>>> upstream/main
   }
 }
 
@@ -2132,8 +2081,7 @@ NTSTATUS ThreadInit() {
   IosTiLog("[FEX-iOS] TI:stack\n");
 #endif
 
-<<<<<<< HEAD
-  auto* Thread = CTX->CreateThread(0, 0);
+  auto* Thread = CTX->CreateThread();
   if (!Thread) {
     /* The emulator could not allocate this thread's state. Unwind what this
      * function has already built and hand the failure back; the loader releases
@@ -2153,9 +2101,6 @@ NTSTATUS ThreadInit() {
 #ifdef FEX_IOS_HOST
   IosTiLog("[FEX-iOS] TI:createthread\n");
 #endif
-=======
-  auto* Thread = CTX->CreateThread();
->>>>>>> upstream/main
 
   // Default segment setup.
   auto Frame = Thread->CurrentFrame;
@@ -2257,11 +2202,8 @@ NTSTATUS ThreadInit() {
   Thread->CurrentFrame->Pointers.ExitFunctionEC = reinterpret_cast<uintptr_t>(IosEcExitLean ? &ExitFunctionECJit : &ExitFunctionEC);
 #else
   Thread->CurrentFrame->Pointers.ExitFunctionEC = reinterpret_cast<uintptr_t>(&ExitFunctionEC);
-<<<<<<< HEAD
 #endif
-=======
   Thread->CurrentFrame->Pointers.SynchronousExceptionHandler = reinterpret_cast<uintptr_t>(&Exception::SynchronousExceptionHandler);
->>>>>>> upstream/main
   CPUArea.StateFrame() = Thread->CurrentFrame;
 
   uint64_t EnterEC = Thread->CurrentFrame->Pointers.DispatcherLoopTopEnterEC;

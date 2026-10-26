@@ -11,7 +11,6 @@
 
 #include <cstdint>
 
-<<<<<<< HEAD
 #if defined(__linux__)
 #include <linux/prctl.h>
 #include <sys/prctl.h>
@@ -19,28 +18,6 @@
 
 namespace FEXCore {
 namespace CPU {
-
-  static constexpr size_t INITIAL_CODE_SIZE = 1024 * 1024 * 16;
-#ifdef FEX_IOS_HOST
-  // iOS-Madeira ml437 (#74): the shared 896MB JIT pool's tail budget is ~188MB
-  // for ALL threads' code buffers; hot threads doubling 16->32->64->128MB
-  // exhausted it in ml436 (head 708MB of DLL copies + tail collided; 10 honest
-  // refusals, 123 degraded threads). Cap growth at 32MB — hot threads clear
-  // and recompile more often, but every thread gets a REAL buffer.
-  // ml1052: 32MB made a large game retranslate forever (56% hit rate, 390
-  // rotations of the one shared buffer). The pool-side allocator now grants
-  // what the pool can afford and refuses the rest, and the ctor's halving
-  // ladder handles a refusal, so the ceiling here is FEX's own branch range.
-  static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
-#else
-  // We don't want to move above 128MB atm because that means we will have to encode longer jumps
-  static constexpr size_t MAX_CODE_SIZE = 1024 * 1024 * 128;
-#endif
-
-=======
-namespace FEXCore {
-namespace CPU {
->>>>>>> upstream/main
   constexpr static uint64_t NamedVectorConstants[FEXCore::IR::NamedVectorConstant::NAMED_VECTOR_CONST_POOL_MAX][2] = {
     {0x0003'0002'0001'0000ULL, 0x0007'0006'0005'0004ULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX
     {0x000B'000A'0009'0008ULL, 0x000F'000E'000D'000CULL}, // NAMED_VECTOR_INCREMENTAL_U16_INDEX_UPPER
@@ -336,7 +313,6 @@ namespace CPU {
 
   CPUBackend::~CPUBackend() = default;
 
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml460 (#75): every C++ toucher of CurrentCodeBuffer /
    * SignalHandlerCodeBuffers holds this while the sweeper may run (see the
@@ -403,13 +379,10 @@ namespace CPU {
   } // namespace
 #endif
 
-  auto CPUBackend::GetEmptyCodeBuffer() -> CodeBuffer* {
+  auto CPUBackend::AcquireNewSharedCodeBuffer() -> CodeBuffer* {
 #ifdef FEX_IOS_HOST
     IosMigrateLockGuard g {IosMigrateLock};
 #endif
-=======
-  auto CPUBackend::AcquireNewSharedCodeBuffer() -> CodeBuffer* {
->>>>>>> upstream/main
     auto PrevCodeBuffer = CurrentCodeBuffer;
 
     // Resize the code buffer and reallocate our code size
@@ -443,7 +416,7 @@ namespace CPU {
         // (WOW64 module: x18 is not a TEB, so the tid is reported as 0.)
         if (PinLogCount.fetch_add(1, std::memory_order_relaxed) < 40) {
           LogMan::Msg::EFmt("[pool-tail] PIN old CodeBuffer size=0x{:x} refcnt={} pinned_now={} tid={:#x} rev=ml459",
-                            CodeBuffer ? CodeBuffer->AllocatedSize : 0, ThreadState->CurrentFrame->SignalHandlerRefCounter,
+                            CodeBuffer ? CodeBuffer->TotalAllocationSize() : 0, ThreadState->CurrentFrame->SignalHandlerRefCounter,
                             SignalHandlerCodeBuffers.size() + 1, Teb ? *reinterpret_cast<uint32_t*>(Teb + 0x48) : 0);
         }
       }
@@ -455,14 +428,10 @@ namespace CPU {
   }
 
   fextl::shared_ptr<CodeBuffer> CPUBackend::CheckCodeBufferUpdate() {
-<<<<<<< HEAD
-    auto NewCodeBuffer = CodeBuffers.GetLatest();
+    auto NewCodeBuffer = SharedCodeBuffers.GetLatest();
 #ifdef FEX_IOS_HOST
     IosMigrateLockGuard g {IosMigrateLock};
 #endif
-=======
-    auto NewCodeBuffer = SharedCodeBuffers.GetLatest();
->>>>>>> upstream/main
     if (CurrentCodeBuffer != NewCodeBuffer) {
       RegisterForSignalHandler(CurrentCodeBuffer);
       return std::exchange(CurrentCodeBuffer, NewCodeBuffer);
@@ -470,7 +439,6 @@ namespace CPU {
     return nullptr;
   }
 
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
   /* iOS-Madeira ml460 (#75): remote-migrate a PARKED thread off a stale
    * generation. Runs on the SWEEPER's thread; the caller has verified under
@@ -515,178 +483,6 @@ namespace CPU {
     return -2;
   }
 #endif
-
-  GuestToHostMap& GetLookupCache(const CodeBuffer& Buffer) {
-    return *Buffer.LookupCache;
-  }
-
-  CodeBuffer::CodeBuffer(size_t Size)
-    : AllocatedSize(Size) {
-    Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
-#ifdef FEX_IOS_HOST
-    /* iOS-Madeira ml364: exec allocations come from the finite JIT pool, and
-     * ml363 died exactly here — the pool was exhausted (bump 858/896MB,
-     * freelist 0), VirtualAlloc returned garbage/NULL with LOGMAN_THROW
-     * compiled out, and ClearCache scribbled the detection string through a
-     * wild pointer on Chrome's GPU thread. Degrade before dying: halve the
-     * request down to 1MB (freelist gaps often satisfy small carves), and if
-     * even that fails force a fault at a recognizable address so the honest-
-     * fault pipeline reports it instead of a random-looking wild write. */
-    while (!Ptr && Size > 0x100000) {
-      Size >>= 1;
-      Ptr = static_cast<uint8_t*>(FEXCore::Allocator::VirtualAlloc(Size, true));
-    }
-    if (Ptr && Size != AllocatedSize) {
-      LogMan::Msg::EFmt("[code-buffer] rev=ml364 exec alloc degraded 0x{:x} -> 0x{:x} (pool pressure)", AllocatedSize, Size);
-      AllocatedSize = Size;
-    }
-    if (!Ptr) {
-      LogMan::Msg::EFmt("[code-buffer] rev=ml364 EXEC ALLOC FAILED even at 0x{:x} — JIT pool exhausted; forcing honest fault at 0xdead", Size);
-      *reinterpret_cast<volatile uint64_t*>(0xdeadULL) = Size;
-    }
-#endif
-    LOGMAN_THROW_A_FMT(!!Ptr, "Couldn't allocate code buffer");
-
-    // Protect the last page of the allocated buffer to trigger SIGSEGV on write access
-    uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
-    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
-                                            FEXCore::Allocator::ProtectOptions::None)) {
-      LogMan::Msg::EFmt("Failed to mprotect last page of code buffer.");
-    }
-
-    FEXCore::Allocator::VirtualName("FEXMemJIT", reinterpret_cast<void*>(Ptr), Size);
-
-    // Huge-pages reduce the amount of iTLB misses dramatically when it works.
-    FEXCore::Allocator::VirtualTHPControl(reinterpret_cast<void*>(Ptr), Size, FEXCore::Allocator::THPControl::Enable);
-
-    LookupCache = fextl::make_unique<GuestToHostMap>();
-  }
-
-  CodeBuffer::~CodeBuffer() {
-    FEXCore::Allocator::VirtualFree(Ptr, AllocatedSize);
-  }
-
-#ifdef FEX_IOS_HOST
-  /* ml460 (#75): process-wide generation counter; read by the deferred-sweep
-   * trigger (Core.cpp) and the sweeper (Module.cpp) via IosCodeBufferGeneration. */
-  std::atomic<uint64_t> IosCodeBufferGenCounter {0};
-  uint64_t IosCodeBufferGeneration() {
-    return IosCodeBufferGenCounter.load(std::memory_order_acquire);
-  }
-#endif
-
-  auto CodeBufferManager::AllocateNew(size_t Size) -> fextl::shared_ptr<CodeBuffer> {
-#if defined(__linux__)
-// MDWE (Memory-Deny-Write-Execute) is a new Linux 6.3 feature.
-// It's equivalent to systemd's `MemoryDenyWriteExecute` but implemented entirely in the kernel.
-//
-// MDWE prevents applications from creating RWX memory mappings.
-// This prevents FEX from doing anything JIT related, as FEX uses RWX for JIT memory mappings.
-//
-// A potential workaround to make FEX work with MDWE is to call mprotect every time we need to write or modify code.
-// Alternatively, FEX could use a memory mirror where one half is mapped as RW and the other is RX.
-//
-// Once MDWE is enabled with the prctl, the feature is sealed and it can /NOT/ be turned off.
-//
-// Status of MDWE is queried through prctl using `PR_GET_MDWE`:
-// -1: The kernel doesn't support MDWE
-// 0: MDWE is supported but disabled
-// >0: MDWE is enabled, hence prohibiting RWX mappings
-#ifndef PR_GET_MDWE
-#define PR_GET_MDWE 66
-#endif
-    int MDWE = ::prctl(PR_GET_MDWE, 0, 0, 0, 0);
-    if (MDWE != -1 && MDWE != 0) {
-      LogMan::Msg::EFmt("MDWE was set to 0x{:x} which means FEX can't allocate executable memory", MDWE);
-    }
-#endif
-
-    auto Buffer = fextl::make_shared<CodeBuffer>(Size);
-
-#ifdef FEX_IOS_HOST
-    /* ml460 (#75): generation bookkeeping. prev_use_count at swap time is the
-     * direct pinning measurement — 1 (the manager) + one per thread still
-     * holding the outgoing generation. The counter drives the deferred sweep
-     * (Core.cpp CompileBlock tail -> Module.cpp IosMaybeSweepCodeBuffers). */
-    {
-      static std::atomic<int> GenLogCount {0};
-      long PrevUseCount = 0;
-      size_t PrevSize = 0;
-      {
-        std::scoped_lock lk {LatestMutex};
-        if (Latest) {
-          PrevUseCount = Latest.use_count();
-          PrevSize = Latest->AllocatedSize;
-        }
-        Latest = Buffer;
-        LatestOffset = 0;
-      }
-      const uint64_t Gen = IosCodeBufferGenCounter.fetch_add(1, std::memory_order_release) + 1;
-      if (GenLogCount.fetch_add(1, std::memory_order_relaxed) < 64) {
-        LogMan::Msg::EFmt("[gen] alloc#{} size=0x{:x} prev_size=0x{:x} prev_use_count={} rev=ml460", Gen, Size, PrevSize, PrevUseCount);
-      }
-    }
-#else
-    Latest = Buffer;
-    LatestOffset = 0;
-#endif
-
-    OnCodeBufferAllocated(Buffer);
-
-    return Buffer;
-  }
-
-  fextl::shared_ptr<CodeBuffer> CodeBufferManager::GetLatest() {
-#ifdef FEX_IOS_HOST
-    /* ml460: the sweeper reads Latest without CodeBufferWriteMutex; all reads
-     * and the AllocateNew assignment go through LatestMutex. First-allocation
-     * recursion is avoided by checking under the lock, allocating outside it
-     * (boot-time single-threaded in practice). */
-    {
-      std::scoped_lock lk {LatestMutex};
-      if (Latest) {
-        return Latest;
-      }
-    }
-    if (FEXCore::Config::Get_ENABLECODECACHINGWIP()) {
-      AllocateNew(MAX_CODE_SIZE);
-    } else {
-      AllocateNew(INITIAL_CODE_SIZE);
-    }
-    std::scoped_lock lk {LatestMutex};
-    return Latest;
-#else
-    if (!Latest) {
-      if (FEXCore::Config::Get_ENABLECODECACHINGWIP()) {
-        // Start with a larger code buffer to avoid resizes that would discard
-        // code loaded from caches
-        AllocateNew(MAX_CODE_SIZE);
-      } else {
-        AllocateNew(INITIAL_CODE_SIZE);
-      }
-    }
-    return Latest;
-#endif
-  }
-
-  fextl::shared_ptr<CodeBuffer> CodeBufferManager::StartLargerCodeBuffer() {
-    if (!Latest) {
-      // Allocate initial CodeBuffer and return it
-      return GetLatest();
-    }
-
-    auto NewCodeBufferSize = GetLatest()->AllocatedSize;
-#ifdef FEX_IOS_HOST
-    // ml1052: tail carves are fixed-size and never coalesce, so a 16->32->64->128
-    // ladder strands 112MB of odd-sized carves. A process that fills its first
-    // buffer is hot: go straight to the maximum (refusal halves it down).
-    NewCodeBufferSize = MAX_CODE_SIZE;
-#else
-    NewCodeBufferSize = std::min<size_t>(NewCodeBufferSize * 2, MAX_CODE_SIZE);
-#endif
-    return AllocateNew(NewCodeBufferSize);
-  }
-
 
 #if defined(FEX_IOS_HOST) && defined(_WIN32)
   /* iOS-Madeira ml460 (#75): the pool-tail sweep. ml459 proved the 208MB tail
@@ -812,7 +608,7 @@ namespace CPU {
   static std::atomic<uint32_t> IosSweepThrottle {0};
   static std::atomic<int> IosSweepLastSkipped {0};
   extern "C" void IosMaybeSweepCodeBuffers(FEXCore::Core::InternalThreadState* CallerThread) {
-    const uint64_t Gen = IosCodeBufferGenCounter.load(std::memory_order_acquire);
+    const uint64_t Gen = IosCodeBufferGeneration();
     bool Retry = false;
     if (Gen == IosSweepLastGen.load(std::memory_order_relaxed)) {
       if (IosSweepLastSkipped.load(std::memory_order_relaxed) == 0 || IosSweepRetryLeft.load(std::memory_order_relaxed) == 0) {
@@ -893,18 +689,10 @@ namespace CPU {
      * Serialize against the CurrentCodeBuffer exchange. */
     IosMigrateLockGuard g {IosMigrateLock};
 #endif
-    auto CheckCodeBuffer = [](CodeBuffer& Buffer, uintptr_t Address) {
-      // The last page of the code buffer is protected, so we need to exclude it from the valid range
-      // when checking if the address is in the code buffer.
-      uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Buffer.Ptr) + Buffer.AllocatedSize - 1, FEXCore::Utils::FEX_PAGE_SIZE);
-      return (Address >= reinterpret_cast<uintptr_t>(Buffer.Ptr) && Address < LastPageAddr);
-=======
-  bool CPUBackend::IsAddressInCodeBuffer(uintptr_t Address) const {
     const auto CheckCodeBuffer = [](const CodeBuffer& Buffer, uintptr_t Address) {
       const auto BufferPtr = reinterpret_cast<uintptr_t>(Buffer.GetBufferBase());
       const uintptr_t LastPageAddr = BufferPtr + Buffer.UsableSize();
       return (Address >= BufferPtr && Address < LastPageAddr);
->>>>>>> upstream/main
     };
 
     if (CheckCodeBuffer(*CurrentCodeBuffer, Address)) {

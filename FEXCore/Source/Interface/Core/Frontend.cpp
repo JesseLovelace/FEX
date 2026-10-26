@@ -1359,7 +1359,6 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
   constexpr uint64_t VSyscall_Base = 0xFFFF'FFFF'FF60'0000ULL;
   constexpr uint64_t VSyscall_End = VSyscall_Base + 0x1000;
 
-<<<<<<< HEAD
 #ifdef FEX_GUEST_WINDOW
   // Guest window: DecodeStream carries two address domains, and under a window they differ.
   //  - InstStream is the *guest* address. It is only used as an integer, by CheckRangeExecutable
@@ -1372,11 +1371,8 @@ const Decoder::DecodeStream Decoder::AdjustAddrForSpecialRegion(const uint8_t* _
   const uint8_t* const HostStream = _InstStream - EntryPoint + RIP;
 #endif
 
-  if (OSABI == FEXCore::HLE::SyscallOSABI::OS_LINUX64 && RIP >= VSyscall_Base && RIP < VSyscall_End) {
-=======
   if (BlockInfo.Is64BitMode && CTX->HostFeatures.ProcessFeatures.HostType == FEXCore::HostFeatures::HostTypeEnum::Linux &&
       RIP >= VSyscall_Base && RIP < VSyscall_End) {
->>>>>>> upstream/main
     // VSyscall
     // This doesn't exist on AArch64 and on x86_64 hosts this is emulated with faults to a region mapped with --xp permissions
     // Offset     0: vgettimeofday
@@ -1460,14 +1456,6 @@ bool Decoder::CheckIfCacheable(FEXCore::Core::InternalThreadState& Thread, const
 void Decoder::DetectDataMasks(uint64_t OpAddress, DecodedBlocks& Block) {
   FEXCore::X86Tables::DecodedOperand* LiteralToPatch = nullptr;
 
-<<<<<<< HEAD
-  // Decode operating mode from thread's CS segment.
-  const auto CSSegment = Core::CPUState::GetSegmentFromIndex(Thread->CurrentFrame->State, Thread->CurrentFrame->State.cs_idx);
-  BlockInfo.Is64BitMode = CSSegment->L == 1;
-  /* [iOS-Madeira] verbose Decoder log suppressed */ // LogMan::Msg::IFmt("[iOS] Decoder: CSSegment->L={}, Is64BitMode={}, Config.Is64BitMode={}", CSSegment->L, BlockInfo.Is64BitMode, (bool)CTX->Config.Is64BitMode);
-  LOGMAN_THROW_A_FMT(BlockInfo.Is64BitMode == CTX->Config.Is64BitMode, "Expected operating mode to not change at runtime!");
-  /* [iOS-Madeira] verbose Decoder log suppressed */ // LogMan::Msg::IFmt("[iOS] Decoder: Assertion passed OK");
-=======
   // cmp *, imm8 - seen varying in mono jitted code
   {
     FEXCore::X86Tables::ModRMDecoded ModRM;
@@ -1481,7 +1469,6 @@ void Decoder::DetectDataMasks(uint64_t OpAddress, DecodedBlocks& Block) {
       }
       if (LiteralToPatch && LiteralToPatch->Literal() != 0) {
         Block.DataMasks.push_back({OpAddress + LastFieldReadOffset, DataMaskType::MOV, LastFieldReadSize});
->>>>>>> upstream/main
 
         LiteralToPatch->Type = X86Tables::DecodedOperand::OpType::LiteralPatchable;
         LiteralToPatch->Data.LiteralPatchable.FieldOffset = LastFieldReadOffset;
@@ -1583,11 +1570,6 @@ void Decoder::DetectDataMasks(uint64_t OpAddress, DecodedBlocks& Block) {
   if (Type != DataMaskType::NONE) {
     Block.DataMasks.push_back({OpAddress + LastFieldReadOffset, Type, LastFieldReadSize});
 
-<<<<<<< HEAD
-    // Do a bit of pointer math to figure out where we are in code
-    InstStream = AdjustAddrForSpecialRegion(_InstStream, EntryPoint, RIPToDecode);
-    /* [iOS-Madeira] verbose Decoder log suppressed */ // LogMan::Msg::IFmt("[iOS] Decoder: Block RIP={:#x}, InstStream={}, entering inner loop", RIPToDecode, (void*)InstStream);
-=======
     if (LiteralToPatch) {
       LiteralToPatch->Type = X86Tables::DecodedOperand::OpType::LiteralPatchable;
       LiteralToPatch->Data.LiteralPatchable.FieldOffset = LastFieldReadOffset;
@@ -1670,7 +1652,6 @@ void Decoder::DecodeLoop(const uint8_t* _InstStream, uint64_t GuestSizePause) {
     }
 
     Paused = false;
->>>>>>> upstream/main
 
     while (1) {
       InstructionSize = 0;
@@ -1698,13 +1679,7 @@ void Decoder::DecodeLoop(const uint8_t* _InstStream, uint64_t GuestSizePause) {
         BlockInfo.CodePages.insert(CurrentCodePage);
       }
 
-<<<<<<< HEAD
-      if (TotalInstructions == 0) {
-        /* [iOS-Madeira] verbose Decoder log suppressed */ // LogMan::Msg::IFmt("[iOS] Decoder: About to decode first instruction at {:#x}, byte={:#x}", OpAddress, InstStream[0]);
-      }
-=======
       LastFieldReadSize = 0;
->>>>>>> upstream/main
       BlockIt->BlockStatus = DecodeInstruction(OpAddress);
       if (HitBadRelocation) {
         BlockInfo.TotalInstructionCount = 0;

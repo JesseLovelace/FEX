@@ -771,7 +771,6 @@ Arm64JITCore::Arm64JITCore(FEXCore::Context::ContextImpl* ctx, FEXCore::Core::In
   ThreadState->LookupCache->Shared = CurrentCodeBuffer->LookupCache.get();
 }
 
-<<<<<<< HEAD
 #ifdef FEX_IOS_HOST
 #ifdef _WIN32
 extern "C" int32_t NtTerminateProcess(void* ProcessHandle, int32_t ExitStatus);
@@ -800,14 +799,6 @@ static void IosCountUnpubBailOrTerminate() {
 }
 #endif
 
-void Arm64JITCore::EmitDetectionString() {
-  const char JITString[] = "FEXJIT::Arm64JITCore::";
-  EmitString(JITString);
-  Align();
-}
-
-=======
->>>>>>> upstream/main
 void Arm64JITCore::ClearCache() {
   // NOTE: Holding on to the reference here is required to ensure validity of the WriteLock mutex
   auto PrevCodeBuffer = CurrentCodeBuffer;
@@ -956,9 +947,34 @@ CodeBuffer::CodeBufferAllocation Arm64JITCore::AllocateCodeBufferInSharedCache(s
   CodeBuffer::CodeBufferAllocation AllocatedInfo {};
   LOGMAN_THROW_A_FMT(CurrentCodeBuffer->LookupCache.get() == ThreadState->LookupCache->Shared, "INVARIANT VIOLATED: SharedLookupCache "
                                                                                                "doesn't match up!\n");
+#ifdef FEX_IOS_HOST
+  /* ml455 (#74 delivery-under-locks): Core.cpp marks a delivery compile via TEB slot 3 depth.
+   * Such a compile must never rewire or swap buffers: the interrupted frame below may be mid-swap
+   * and write-own the lookup lock. Torn state or a full buffer fails this one compile instead. */
+  uint64_t IosStampTeb = 0;
+  __asm volatile("mov %0, x18" : "=r"(IosStampTeb));
+  const bool IosUnpubMode = IosStampTeb && *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16d0) != 0;
+  if (IosUnpubMode) {
+    if (ThreadState->LookupCache->Shared != CurrentCodeBuffer->LookupCache.get() || SharedCodeBuffers.GetLatest() != CurrentCodeBuffer) {
+      LogMan::Msg::EFmt("[fexlock] UNPUB-COMPILE bail: buffer swap in flight below us rev=ml455");
+      IosCountUnpubBailOrTerminate();
+      return {};
+    }
+    AllocatedInfo = CurrentCodeBuffer->AtomicAllocateBuffer(Size);
+    if (!AllocatedInfo.BufferAllocationOffset) {
+      LogMan::Msg::EFmt("[fexlock] UNPUB-COMPILE bail: buffer full, refusing swap mid-delivery rev=ml455");
+      IosCountUnpubBailOrTerminate();
+    }
+    return AllocatedInfo;
+  }
+#endif
   // Bring CodeBuffer up to date
   if (auto Prev = CheckCodeBufferUpdate()) {
+#ifdef FEX_IOS_HOST
+    FEXCore::Core::ResetCallRetStack(ThreadState, "jit-rollover");
+#else
     Allocator::VirtualDontNeed(ThreadState->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE);
+#endif
     auto lk = ThreadState->LookupCache->AcquireWriteLock();
     ThreadState->LookupCache->ChangeGuestToHostMapping(*Prev, *CurrentCodeBuffer->LookupCache, lk);
   }
@@ -1021,12 +1037,7 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
 
   // JIT output is first written to a temporary buffer and later relocated to the CodeBuffer.
   // This minimizes lock contention of CodeBufferWriteMutex.
-<<<<<<< HEAD
-  // [iOS-Madeira] verbose SSACount/TempBuf logs suppressed
-  auto TempCodeBufferInfo = TempAllocator.ReownOrClaimBufferWithSize(DesiredBufferRange);
-=======
   auto TempCodeBufferInfo = TempCodeBufferAllocator.ReownOrClaimBufferWithSize(DesiredBufferRange);
->>>>>>> upstream/main
   auto TempCodeBuffer = TempCodeBufferInfo.Ptr;
   const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
 
@@ -1269,133 +1280,18 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
 
   // Migrate the compile output from temporary storage to the actual CodeBuffer.
   {
-<<<<<<< HEAD
-#ifdef FEX_IOS_HOST
-    /* iOS-Madeira ml446 (#74): stamp ownership of this std::mutex (an SRWLOCK
-     * underneath, anonymous by design) in TEB Instrumentation[6] so the
-     * monitor's dead-holder reaper can spot a cross-terminated thread that
-     * died inside this section and release the lock.  Cleared at scope end.
-     *
-     * ml449: the ml448 run caught Chrome_InProcRendererThread HOLDING this
-     * mutex while parked waiting for it — the compile path re-entered this
-     * section on the same thread (non-recursive mutex ⇒ permanent self-park,
-     * the #74 stall's live-holder flavor).  The stamp doubles as a perfect
-     * self-ownership test: grant nested entry instead of parking.  The outer
-     * hold already has exclusive access; the nested section's LatestOffset
-     * use is same-thread-sequenced.  Loud capped log names the re-entry. */
-    uint64_t IosStampTeb = 0;
-    bool IosNestedS = false;
-    __asm volatile("mov %0, x18" : "=r"(IosStampTeb));
-    if (IosStampTeb && *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16e8) ==
-                         reinterpret_cast<uint64_t>(&CodeBuffers.CodeBufferWriteMutex)) {
-      IosNestedS = true;
-      static std::atomic<int> NestLogCount {0};
-      if (NestLogCount.fetch_add(1, std::memory_order_relaxed) < 20) {
-        LogMan::Msg::EFmt("[fexlock] SELF-NESTED CodeBufferWriteMutex ra={} rev=ml449", __builtin_return_address(0));
-      }
-    }
-    /* ml455 (#74 delivery-under-locks): Core.cpp marks a delivery compile via
-     * TEB slot 3 depth.  In that mode this section must never park (another
-     * thread can hold S while itself waiting on a lookup lock our interrupted
-     * frame write-owns — a 3-way cycle no reaper can break) and must never
-     * swap buffers (the ml452 TAIL-REFUSED storm). */
-    const bool IosUnpubMode = IosStampTeb && *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16d0) != 0;
-    std::unique_lock<std::remove_reference_t<decltype(CodeBuffers.CodeBufferWriteMutex)>> CodeBufferLock;
-    if (!IosNestedS) {
-      if (IosUnpubMode) {
-        /* Bounded acquire: tens of ms of yield-spins, then fail this ONE
-         * compile (dispatcher faults one thread) instead of parking forever. */
-        bool Acquired = false;
-        for (uint64_t Spin = 0; Spin < 4000000; Spin++) {
-          if (CodeBuffers.CodeBufferWriteMutex.try_lock()) {
-            Acquired = true;
-            break;
-          }
-          __asm volatile("yield");
-        }
-        if (!Acquired) {
-          LogMan::Msg::EFmt("[fexlock] UNPUB-COMPILE bail: S unavailable (possible cycle via our held locks) rev=ml455");
-          IosCountUnpubBailOrTerminate();
-          return {};
-        }
-        CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex, std::adopt_lock};
-      } else {
-        CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
-      }
-      if (IosStampTeb) {
-        *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16e8) = reinterpret_cast<uint64_t>(&CodeBuffers.CodeBufferWriteMutex);
-      }
-    }
-#else
-    auto CodeBufferLock = std::unique_lock {CodeBuffers.CodeBufferWriteMutex};
-#endif
-
-    // Query size of generated code
-    const auto TempSize = GetCursorOffset();
-
-    // Bring CodeBuffer up to date
-    {
-      LOGMAN_THROW_A_FMT(CurrentCodeBuffer->LookupCache.get() == ThreadState->LookupCache->Shared, "INVARIANT VIOLATED: SharedLookupCache "
-                                                                                                   "doesn't match up!\n");
-#ifdef FEX_IOS_HOST
-      /* ml455: a delivery compile must not rewire buffers — the interrupted
-       * frame below may be mid-swap and write-own the lookup lock (the very
-       * park this path exists to avoid).  Torn state (side-effect-free checks;
-       * CheckCodeBufferUpdate() itself exchanges CurrentCodeBuffer) ⇒ fail
-       * this one compile. */
-      if (IosUnpubMode) {
-        if (ThreadState->LookupCache->Shared != CurrentCodeBuffer->LookupCache.get() || CodeBuffers.GetLatest() != CurrentCodeBuffer) {
-          LogMan::Msg::EFmt("[fexlock] UNPUB-COMPILE bail: buffer swap in flight below us rev=ml455");
-          IosCountUnpubBailOrTerminate();
-          if (IosStampTeb && !IosNestedS) {
-            *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16e8) = 0;
-          }
-          return {};
-        }
-      } else
-#endif
-      if (auto Prev = CheckCodeBufferUpdate()) {
-        FEXCore::Core::ResetCallRetStack(ThreadState, "jit-rollover");
-        auto lk = ThreadState->LookupCache->AcquireWriteLock();
-        ThreadState->LookupCache->ChangeGuestToHostMapping(*Prev, *CurrentCodeBuffer->LookupCache, lk);
-      }
-
-      // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
-      SetBuffer(CurrentCodeBuffer->Ptr, CurrentCodeBuffer->AllocatedSize);
-#if defined(__APPLE__) || defined(FEX_IOS_HOST)
-      // Restore WriteOffset for dual-mapped JIT pool (CodeBuffer is RX, writes go to RW mirror).
-      // (FEX_IOS_HOST: same logic for ARM64EC PE build — CodeBuffer is iOS-allocated dual-mapped.)
-      SetWriteOffset(FEXCore::DualMap::WriteOffset);
-#endif
-      SetCursorOffset(CodeBuffers.LatestOffset);
-      Align16B();
-      if ((GetCursorOffset() + TempSize) > CurrentCodeBuffer->UsableSize()) {
-#ifdef FEX_IOS_HOST
-        /* ml455: NEVER swap buffers under a delivery compile — ClearCodeCache
-         * from beneath a live outer emission is the ml452 TAIL-REFUSED storm,
-         * and its lookup-lock writes are the park.  Fail this one compile. */
-        if (IosUnpubMode) {
-          LogMan::Msg::EFmt("[fexlock] UNPUB-COMPILE bail: buffer full, refusing swap mid-delivery rev=ml455");
-          IosCountUnpubBailOrTerminate();
-          if (IosStampTeb && !IosNestedS) {
-            *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16e8) = 0;
-          }
-          return {};
-        }
-#endif
-        CTX->ClearCodeCache(ThreadState);
-      }
-
-      CodeBuffers.LatestOffset = GetCursorOffset();
-    }
-=======
     LOGMAN_THROW_A_FMT(CodeData.Size % 16 == 0, "Needs to be 16B aligned!");
 
     auto AllocatedInfo = AllocateCodeBufferInSharedCache(CodeData.Size);
     // NOTE: 16-byte alignment of the new cursor offset must be preserved for block linking records
     LOGMAN_THROW_A_FMT((reinterpret_cast<uintptr_t>(AllocatedInfo.BufferAllocationOffset) % 16) == 0, "Allocated buffer wasn't 16B "
                                                                                                       "aligned?");
->>>>>>> upstream/main
+#ifdef FEX_IOS_HOST
+    if (!AllocatedInfo.BufferAllocationOffset) {
+      // ml455: a delivery compile that could not get space without swapping buffers fails this one compile.
+      return {};
+    }
+#endif
 
     // Adjust host addresses
     const auto Delta = AllocatedInfo.BufferAllocationOffset - CodeData.BlockBegin;
@@ -1406,46 +1302,13 @@ CPUBackend::CompiledCode Arm64JITCore::CompileCode(uint64_t Entry, uint64_t Size
     CodeBegin += Delta;
     CodeData.HostCodeOffset = CodeData.BlockBegin - CurrentCodeBuffer->GetBufferBase();
 
-<<<<<<< HEAD
-    // Copy over CodeBuffer contents (write to RW mirror on iOS)
-#if defined(FEX_IOS_HOST)
-    /* iOS-Madeira 2026-05-19 sanity log: one-shot diagnostic on first 2 JIT
-     * copies to verify the per-Buffer dual-map wiring is correct.
-     * Expect: TempCodeBuffer != RXCursor (temp is heap, offset 0), and
-     * RWCursor = RXCursor + WriteOffset where WriteOffset is the real
-     * runtime RX→RW distance (from MADEIRA_JIT_WRITE_OFFSET — NOT a fixed
-     * 0x10000000; the RW alias is placed with VM_FLAGS_ANYWHERE). */
-    {
-      static volatile int dual_map_log_count = 0;
-      int n = __sync_add_and_fetch(&dual_map_log_count, 1);
-      if (n <= 2) {
-        auto* RXCursor = GetCursorAddress<uint8_t*>();
-        auto* RWCursor = WritePtr(RXCursor);
-        LogMan::Msg::EFmt("[DUAL_MAP_SANITY #{}] TempCodeBuffer=0x{:x} RXCursor=0x{:x} "
-                          "RWCursor=0x{:x} WriteOffset=0x{:x} TempSize=0x{:x}",
-                          n, reinterpret_cast<uintptr_t>(TempCodeBuffer),
-                          reinterpret_cast<uintptr_t>(RXCursor),
-                          reinterpret_cast<uintptr_t>(RWCursor),
-                          (int64_t)GetWriteOffset(), (size_t)TempSize);
-      }
-    }
-#endif
-    memcpy(WritePtr(GetCursorAddress<uint8_t*>()), TempCodeBuffer, TempSize);
-    SetCursorOffset(CodeBuffers.LatestOffset + TempSize);
-
-    CodeBuffers.LatestOffset = GetCursorOffset();
-
-#ifdef FEX_IOS_HOST
-    /* ml446: clear the ownership stamp before the lock releases at scope end
-     * (ml449: outer hold only — a nested grant must leave the stamp intact) */
-    if (IosStampTeb && !IosNestedS) {
-      *reinterpret_cast<uint64_t*>(IosStampTeb + 0x16e8) = 0;
-    }
-#endif
-=======
     // Copy over CodeBuffer contents
+#if defined(__APPLE__) || defined(FEX_IOS_HOST)
+    // The code buffer is the RX view of the dual-mapped JIT pool; writes go to the RW mirror.
+    memcpy(AllocatedInfo.BufferAllocationOffset + FEXCore::DualMap::WriteOffset, TempCodeBuffer, CodeData.Size);
+#else
     memcpy(AllocatedInfo.BufferAllocationOffset, TempCodeBuffer, CodeData.Size);
->>>>>>> upstream/main
+#endif
   }
   /* perf-silenced */ // LogMan::Msg::IFmt("[iOS] Arm64JIT: CompileCode done, returning");
 
@@ -1516,8 +1379,17 @@ CPUBackend::CompiledCode Arm64JITCore::LoadCachedCode(std::span<const uint8_t> H
   auto AllocatedInfo = AllocateCodeBufferInSharedCache(HostBytes.size());
 
   uint8_t* Dest = AllocatedInfo.BufferAllocationOffset;
+#ifdef FEX_IOS_HOST
+  if (!Dest) {
+    return {};
+  }
+  // RX view of the dual-mapped pool: write through the RW mirror, flush through the kernel.
+  memcpy(Dest + FEXCore::DualMap::WriteOffset, HostBytes.data(), HostBytes.size());
+  NtFlushInstructionCache(reinterpret_cast<void*>(~0ull), Dest, HostBytes.size());
+#else
   memcpy(Dest, HostBytes.data(), HostBytes.size());
   ClearICache(Dest, HostBytes.size());
+#endif
 
   CPUBackend::CompiledCode Result;
   Result.BlockBegin = Dest;
