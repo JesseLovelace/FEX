@@ -24,7 +24,55 @@ extern "C" NTSTATUS RtlUnicodeToUTF8N(OUT PCHAR UTF8StringDestination, IN ULONG 
 #endif
 
 namespace FEXCore::FileUtils {
-#ifndef _WIN32
+#if defined(__APPLE__)
+// MADEIRA (local fork): Apple has no getdents64; walk with readdir.
+static bool RecursiveRemoveDirectoryApple(const fextl::string& Path) {
+  DIR* Dir = ::opendir(Path.c_str());
+  if (!Dir) {
+    return errno == ENOENT;
+  }
+  bool Result = true;
+  while (struct dirent* Ent = ::readdir(Dir)) {
+    std::string_view Name = Ent->d_name;
+    if (Name == "." || Name == "..") {
+      continue;
+    }
+    fextl::string Child = Path + "/" + fextl::string(Name);
+    if (Ent->d_type == DT_DIR) {
+      if (!RecursiveRemoveDirectoryApple(Child) || (::rmdir(Child.c_str()) == -1 && errno != ENOENT)) {
+        Result = false;
+        break;
+      }
+    } else if (::unlink(Child.c_str()) == -1 && errno != ENOENT) {
+      Result = false;
+      break;
+    }
+  }
+  ::closedir(Dir);
+  return Result;
+}
+
+FEX_DEFAULT_VISIBILITY bool RecursiveRemoveDirectory(const fextl::string& Directory) {
+  return RecursiveRemoveDirectoryApple(Directory) && (::rmdir(Directory.c_str()) == 0 || errno == ENOENT);
+}
+
+FEX_DEFAULT_VISIBILITY void WalkDirectory(std::string_view Directory,
+                                          fextl::move_only_function<void(std::string_view name, bool is_dir, const void* user_data)> Callback,
+                                          const void* user_data) {
+  DIR* Dir = ::opendir(fextl::string(Directory).c_str());
+  if (!Dir) {
+    return;
+  }
+  while (struct dirent* Ent = ::readdir(Dir)) {
+    std::string_view Name = Ent->d_name;
+    if (Name == "." || Name == "..") {
+      continue;
+    }
+    Callback(Name, Ent->d_type == DT_DIR, user_data);
+  }
+  ::closedir(Dir);
+}
+#elif !defined(_WIN32)
 static inline bool unlinkat(int fd, const char* path, bool dir) {
   if (::unlinkat(fd, path, dir ? AT_REMOVEDIR : 0) == -1) {
     return errno == ENOENT;
